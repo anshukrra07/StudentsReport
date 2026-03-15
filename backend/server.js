@@ -12,8 +12,21 @@ const { startScheduleCron } = require('./scheduleCron');
 const app = express();
 
 // Restrict CORS to the configured frontend origin (never use '*' in production)
-const ALLOWED_ORIGIN = process.env.FRONTEND_URL || 'http://localhost:3000';
-app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
+const allowedOrigins = [
+  "http://localhost:3000",
+  process.env.FRONTEND_URL
+];
+
+app.use(cors({
+  origin: function(origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS blocked"));
+    }
+  },
+  credentials: true
+}));
 app.use(express.json());
 
 // Warn loudly if JWT_SECRET is not set in environment
