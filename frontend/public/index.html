@@ -1,0 +1,66 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>VFSTR DEO Reports — Vignan's Foundation for Science, Technology and Research</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Sora:wght@700;800&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
+    <style>
+      *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+      :root {
+        /* BRIGHT LIGHT PALETTE — white + vivid accents */
+        --bg:       #f0f4ff;
+        --surface:  #ffffff;
+        --surface2: #f8faff;
+        --border:   #e2e8f8;
+        --text:     #1e2d4a;
+        --text2:    #5a6a85;
+        --text3:    #8fa0bc;
+        /* Vivid accent palette */
+        --blue:     #2563eb;
+        --blue-l:   #3b82f6;
+        --blue-ll:  #93c5fd;
+        --indigo:   #4f46e5;
+        --violet:   #7c3aed;
+        --pink:     #ec4899;
+        --rose:     #f43f5e;
+        --orange:   #f97316;
+        --amber:    #f59e0b;
+        --yellow:   #eab308;
+        --green:    #10b981;
+        --teal:     #14b8a6;
+        --cyan:     #06b6d4;
+        --sky:      #0ea5e9;
+        --navy:     #1e3a6e;
+        /* Gradient presets */
+        --g-blue:   linear-gradient(135deg,#2563eb,#4f46e5);
+        --g-teal:   linear-gradient(135deg,#0ea5e9,#14b8a6);
+        --g-orange: linear-gradient(135deg,#f97316,#f59e0b);
+        --g-rose:   linear-gradient(135deg,#f43f5e,#ec4899);
+        --g-violet: linear-gradient(135deg,#7c3aed,#4f46e5);
+        --g-green:  linear-gradient(135deg,#10b981,#0ea5e9);
+        --g-candy:  linear-gradient(135deg,#2563eb,#7c3aed,#ec4899);
+      }
+      body { background:var(--bg); font-family:'Plus Jakarta Sans',sans-serif; color:var(--text); overflow-x:hidden; }
+      ::-webkit-scrollbar { width:6px; height:6px; }
+      ::-webkit-scrollbar-track { background:#f0f4ff; }
+      ::-webkit-scrollbar-thumb { background:#c7d2fe; border-radius:3px; }
+      ::-webkit-scrollbar-thumb:hover { background:#818cf8; }
+      input, select, button { font-family:'Plus Jakarta Sans',sans-serif; }
+      input:focus, select:focus { outline:2px solid #3b82f6 !important; outline-offset:1px; }
+      @keyframes fadeUp   { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+      @keyframes fadeIn   { from{opacity:0} to{opacity:1} }
+      @keyframes spin     { to{transform:rotate(360deg)} }
+      @keyframes float    { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-8px)} }
+      @keyframes pulse    { 0%,100%{opacity:1} 50%{opacity:0.5} }
+      @keyframes gradMove { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+      @keyframes scalePop { from{opacity:0;transform:scale(0.96)} to{opacity:1;transform:scale(1)} }
+      @keyframes shimmer  { 0%{left:-100%} 100%{left:200%} }
+      @keyframes slideR   { from{opacity:0;transform:translateX(-12px)} to{opacity:1;transform:translateX(0)} }
+      @keyframes bounce   { 0%,100%{transform:translateY(0)} 40%{transform:translateY(-6px)} 60%{transform:translateY(-3px)} }
+    </style>
+  </head>
+  <body><div id="root"></div></body>
+</html>
