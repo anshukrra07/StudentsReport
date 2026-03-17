@@ -200,7 +200,6 @@ export default function Chatbot() {
   const [busy, setBusy]         = useState(false);
   const [hovS, setHovS]         = useState('');
   const [hovB, setHovB]         = useState('');
-  const [emailForm, setEmailForm] = useState({ visible:false, email:'', sending:false, sent:false, sentMode:'', sentFreq:'', msgIdx:null, showSchedule:false, freq:'weekly' });
 
   // ── Voice recognition state ──
   const [isListening, setIsListening]         = useState(false);
@@ -293,8 +292,8 @@ export default function Chatbot() {
     }
   },[isListening, voiceSupported]);
 
-  const push = (role,text,data=null,type=null,subType='',intent='',quickPicks=null,action=null) =>
-    setMsgs(p=>[...p,{role,text,data,type,subType,intent,quickPicks,action,time:new Date()}]);
+  const push = (role,text,data=null,type=null,subType='',intent='',quickPicks=null) =>
+    setMsgs(p=>[...p,{role,text,data,type,subType,intent,quickPicks,time:new Date()}]);
 
   // ── Conversational replies (no AI/keyword needed) ────────────────────
   const CONV_REPLIES = [
@@ -310,12 +309,8 @@ export default function Chatbot() {
       reply: `🤖 I can generate these reports for VFSTR:\n\n📋 Attendance — section, subject, dept, low\n📊 Marks — internal, external, results, performance\n⚠️  Backlogs — list, repeated, pending\n⭐ CGPA — distribution, rankings, toppers\n⚡ Risk — low CGPA, backlogs, attendance\n🏆 Top Performers\n\nJust type naturally! Examples:\n• "Show CSE semester 3 attendance"\n• "Which ECE students are at risk?"\n• "Top 5 students by CGPA"` },
     { match: /^(who are you|what are you|introduce yourself)\b/i,
       reply: `🎓 I'm the VFSTR Report Assistant — an AI-powered chatbot for Vignan's Foundation for Science, Technology & Research.\n\nI help DEOs and faculty generate academic reports instantly using natural language.\n\nJust ask me for any report!` },
-    { match: /^(ok|okay|k)\s*$/i,
-      reply: `👍 Sure! What report would you like?\n\nTry: "Show attendance for CSE" or "At-risk students"` },
-    { match: /^(ok|okay)\s+.{1,30}$/i,
-      // "ok give something", "ok show me something", "ok suggest" etc
-      reply: null, // null = use AI conversational reply below
-    },
+    { match: /^(ok|okay|k|fine|good|great|nice|cool|sure|alright)\s*$/i,
+      reply: `👍 Great! What report would you like?\n\nTry: "Show attendance for CSE" or "At-risk students"` },
   ];
 
   // ── Generic "generate report" phrases → show quick-pick buttons ───────
@@ -352,20 +347,11 @@ export default function Chatbot() {
     try {
       // ── Step 0: conversational messages ──────────────────────────────
       const conv = CONV_REPLIES.find(c => c.match.test(msg.trim()));
-      if (conv && conv.reply) { push('bot', conv.reply); setBusy(false); return; }
-      // conv.reply === null means: vague/unclear → fall through to AI conversational
+      if (conv) { push('bot', conv.reply); setBusy(false); return; }
 
       // ── Step 0.5: generic "generate report" → quick-pick buttons ─────
       if (GENERIC_REPORT.test(msg.trim())) {
         push('bot', 'Sure! Which type of report would you like to generate?\n\nClick one below or type something more specific:', null, null, '', '', QUICK_PICKS);
-        setBusy(false); return;
-      }
-
-      // ── Step 0.6: email intent → show inline email form ───────────────
-      const emailIntent = /\b(send|email|mail|forward|deliver|share)\b.{0,40}\b(report|data|results|marks|attendance|summary)\b|\b(report|data|results)\b.{0,20}\b(to|via)\b.{0,20}\b(email|mail)\b/i;
-      if (emailIntent.test(msg.trim())) {
-        const msgIdx = msgs.length + 1; // index of the bot reply we're about to push
-        push('bot', '📧 Sure! Enter the email address to send the report to:', null, null, '', '', null, { type:'emailForm', msgIdx });
         setBusy(false); return;
       }
 
@@ -422,24 +408,8 @@ export default function Chatbot() {
         }
 
         if (!rt) {
-          // Ask Gemini to reply conversationally rather than showing a static error
-          try {
-            const convRes = await axios.post(`${API}/ai/query`,
-              { message: `__CONVERSE__: ${msg}` }, { timeout: 10000 }
-            );
-            // If Gemini still returns a report, use it
-            if (convRes.data?.parsed?.report && convRes.data?.endpoint) {
-              rt       = convRes.data.parsed.report;
-              endpoint = convRes.data.endpoint;
-              intent   = convRes.data.intent || '';
-              p = convRes.data.parsed;
-            }
-          } catch(_) {}
-
-          if (!rt) {
-            push('bot', `🤔 I'm not sure what report you need for that.\n\nHere's what I can generate — click one to get started:`, null, null, '', '', QUICK_PICKS);
-            setBusy(false); return;
-          }
+          push('bot', `🤔 I couldn't find a matching report for that.\n\nTry being specific:\n• "Show CSE attendance for semester 3"\n• "Which ECE students have backlogs?"\n• "Top 10 students by CGPA"\n• "At-risk students in batch 2022-2026"\n\n💡 Or click a suggestion chip above!`);
+          setBusy(false); return;
         }
       }
 
@@ -559,146 +529,6 @@ export default function Chatbot() {
                           onClick={()=>send(qp.query)}
                         >{qp.label}</button>
                       ))}
-                    </div>
-                  )}
-                  {m.action?.type==='emailForm' && (
-                    <div style={{marginTop:12}}>
-                      {emailForm.sent && emailForm.msgIdx===i ? (
-                        <div style={{background:'#f0fdf4',border:'1px solid #a7f3d0',borderRadius:8,padding:'10px 14px',color:'#065f46',fontSize:13,fontWeight:600}}>
-                          {emailForm.sentMode==='now'
-                            ? `✅ Report sent now to ${emailForm.email}!`
-                            : `✅ Scheduled! Report will be delivered ${emailForm.sentFreq==='daily'?'every day':emailForm.sentFreq==='weekly'?'every week':'every month'} to ${emailForm.email}`}
-                        </div>
-                      ) : (
-                        <div style={{display:'flex',flexDirection:'column',gap:10}}>
-                          {/* Email input */}
-                          <input
-                            type="email"
-                            placeholder="Enter email address..."
-                            value={emailForm.msgIdx===i ? emailForm.email : ''}
-                            onChange={e=>setEmailForm(f=>({...f,email:e.target.value,msgIdx:i}))}
-                            onFocus={()=>setEmailForm(f=>({...f,msgIdx:i}))}
-                            style={{background:'#f8faff',border:'1.5px solid #bfdbfe',borderRadius:8,padding:'9px 12px',fontSize:13,color:'#1e2d4a',outline:'none',fontFamily:"'Plus Jakarta Sans',sans-serif",width:'100%'}}
-                          />
-                          {/* Two option cards */}
-                          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-                            {/* Send Now */}
-                            <button
-                              disabled={emailForm.sending}
-                              onClick={async()=>{
-                                const email = emailForm.msgIdx===i ? emailForm.email : '';
-                                if(!email||!email.includes('@')){ alert('Please enter a valid email address.'); return; }
-                                setEmailForm(f=>({...f,sending:true,msgIdx:i}));
-                                try {
-                                  // Schedule with nextRun = now so cron fires immediately
-                                  await axios.post(`${API}/reports/schedule`,{
-                                    reportType: m.action.reportType||'attendance',
-                                    frequency:  'daily',
-                                    email,
-                                    label:      'Chatbot instant report',
-                                  });
-                                  setEmailForm(f=>({...f,sending:false,sent:true,sentMode:'now',msgIdx:i}));
-                                } catch(e){
-                                  alert('Failed: '+(e.response?.data?.message||e.message));
-                                  setEmailForm(f=>({...f,sending:false}));
-                                }
-                              }}
-                              style={{
-                                background:'linear-gradient(135deg,#2563eb,#4f46e5)',
-                                color:'#fff',border:'none',borderRadius:10,padding:'12px 10px',
-                                fontSize:13,fontWeight:700,cursor:emailForm.sending?'default':'pointer',
-                                fontFamily:"'Plus Jakarta Sans',sans-serif",
-                                display:'flex',flexDirection:'column',alignItems:'center',gap:4,
-                                opacity:emailForm.sending?0.7:1,
-                              }}
-                            >
-                              <span style={{fontSize:20}}>📤</span>
-                              <span>{emailForm.sending?'Sending…':'Send Now'}</span>
-                              <span style={{fontSize:10,opacity:0.8,fontWeight:400}}>One-time instant delivery</span>
-                            </button>
-
-                            {/* Schedule */}
-                            <button
-                              disabled={emailForm.sending}
-                              onClick={()=>setEmailForm(f=>({...f,showSchedule:!f.showSchedule,msgIdx:i}))}
-                              style={{
-                                background: emailForm.showSchedule&&emailForm.msgIdx===i
-                                  ? 'linear-gradient(135deg,#7c3aed,#4f46e5)'
-                                  : '#f5f3ff',
-                                color: emailForm.showSchedule&&emailForm.msgIdx===i ? '#fff' : '#7c3aed',
-                                border:`1.5px solid #ddd6fe`,borderRadius:10,padding:'12px 10px',
-                                fontSize:13,fontWeight:700,cursor:'pointer',
-                                fontFamily:"'Plus Jakarta Sans',sans-serif",
-                                display:'flex',flexDirection:'column',alignItems:'center',gap:4,
-                              }}
-                            >
-                              <span style={{fontSize:20}}>📅</span>
-                              <span>Schedule</span>
-                              <span style={{fontSize:10,opacity:0.8,fontWeight:400}}>Recurring delivery</span>
-                            </button>
-                          </div>
-
-                          {/* Schedule options — shown when Schedule button clicked */}
-                          {emailForm.showSchedule && emailForm.msgIdx===i && (
-                            <div style={{background:'#f5f3ff',border:'1px solid #ddd6fe',borderRadius:10,padding:'12px 14px',display:'flex',flexDirection:'column',gap:10}}>
-                              <div style={{color:'#7c3aed',fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.8px'}}>Choose Frequency</div>
-                              <div style={{display:'flex',gap:8}}>
-                                {[
-                                  {v:'daily',  label:'Daily',   icon:'📅', desc:'Every day 8 AM'},
-                                  {v:'weekly', label:'Weekly',  icon:'📆', desc:'Every Monday'},
-                                  {v:'monthly',label:'Monthly', icon:'🗓', desc:'1st of month'},
-                                ].map(f=>(
-                                  <button key={f.v}
-                                    onClick={()=>setEmailForm(ef=>({...ef,freq:f.v}))}
-                                    style={{
-                                      flex:1,border:`1.5px solid ${emailForm.freq===f.v?'#7c3aed':'#ddd6fe'}`,
-                                      borderRadius:8,padding:'8px 6px',
-                                      background:emailForm.freq===f.v?'#7c3aed':'#fff',
-                                      color:emailForm.freq===f.v?'#fff':'#7c3aed',
-                                      cursor:'pointer',fontFamily:"'Plus Jakarta Sans',sans-serif",
-                                      display:'flex',flexDirection:'column',alignItems:'center',gap:2,
-                                    }}
-                                  >
-                                    <span style={{fontSize:16}}>{f.icon}</span>
-                                    <span style={{fontSize:12,fontWeight:700}}>{f.label}</span>
-                                    <span style={{fontSize:9,opacity:0.8}}>{f.desc}</span>
-                                  </button>
-                                ))}
-                              </div>
-                              <button
-                                disabled={emailForm.sending}
-                                onClick={async()=>{
-                                  const email = emailForm.msgIdx===i ? emailForm.email : '';
-                                  const freq  = emailForm.freq || 'weekly';
-                                  if(!email||!email.includes('@')){ alert('Please enter a valid email address.'); return; }
-                                  setEmailForm(f=>({...f,sending:true}));
-                                  try {
-                                    await axios.post(`${API}/reports/schedule`,{
-                                      reportType: m.action.reportType||'attendance',
-                                      frequency:  freq,
-                                      email,
-                                      label: `Chatbot ${freq} report`,
-                                    });
-                                    setEmailForm(f=>({...f,sending:false,sent:true,sentMode:'schedule',sentFreq:freq,msgIdx:i}));
-                                  } catch(e){
-                                    alert('Failed: '+(e.response?.data?.message||e.message));
-                                    setEmailForm(f=>({...f,sending:false}));
-                                  }
-                                }}
-                                style={{
-                                  background:'linear-gradient(135deg,#7c3aed,#4f46e5)',
-                                  color:'#fff',border:'none',borderRadius:8,padding:'10px',
-                                  fontSize:13,fontWeight:700,cursor:emailForm.sending?'default':'pointer',
-                                  fontFamily:"'Plus Jakarta Sans',sans-serif",
-                                  opacity:emailForm.sending?0.7:1,
-                                }}
-                              >
-                                {emailForm.sending?'⟳ Saving…':`📅 Confirm ${(emailForm.freq||'weekly').charAt(0).toUpperCase()+(emailForm.freq||'weekly').slice(1)} Schedule`}
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
                     </div>
                   )}
                   {m.data&&m.data.length>0&&<MiniTable data={m.data} type={m.type} subType={m.subType||''}/>}
