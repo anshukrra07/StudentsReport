@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const Student = require('../models/Student');
 const { authenticate } = require('../middleware/auth');
+const { buildScopedReportRows } = require('../lib/reportExports');
 
 router.use(authenticate);
 
@@ -242,7 +243,7 @@ router.get('/marks', async (req, res) => {
 router.get('/backlogs', async (req, res) => {
   try {
     const { subtype } = req.query;
-    const students = await Student.find(buildFilter(req.user, req.query));
+    const students = await Student.find(buildFilter(req.user, req.query, true));
 
     let result = students.map(s => {
       const scopedSemesters = getScopedSemesters(s, req.query);
@@ -296,7 +297,7 @@ router.get('/backlogs', async (req, res) => {
 router.get('/cgpa', async (req, res) => {
   try {
     const { type } = req.query;
-    const students = await Student.find(buildFilter(req.user, req.query));
+    const students = await Student.find(buildFilter(req.user, req.query, true));
     const rankedStudents = students
       .map(s => ({ student: s, score: getScopedScore(s, req.query) }))
       .filter(({ score }) => !req.query.semester && !req.query.academicYear ? true : score > 0)
@@ -339,7 +340,7 @@ router.get('/cgpa', async (req, res) => {
 router.get('/risk', async (req, res) => {
   try {
     const { riskType } = req.query;
-    const students = await Student.find(buildFilter(req.user, req.query));
+    const students = await Student.find(buildFilter(req.user, req.query, true));
 
     let atRisk = students.map(s => {
       const scopedSemesters = getScopedSemesters(s, req.query);
@@ -372,7 +373,7 @@ router.get('/risk', async (req, res) => {
 router.get('/top-performers', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
-    const students = await Student.find(buildFilter(req.user, req.query));
+    const students = await Student.find(buildFilter(req.user, req.query, true));
     const rankedStudents = students
       .map(s => ({ student: s, score: getScopedScore(s, req.query) }))
       .filter(({ score }) => !req.query.semester && !req.query.academicYear ? true : score > 0)
@@ -389,7 +390,7 @@ router.get('/top-performers', async (req, res) => {
 // ─── DASHBOARD SUMMARY ─────────────────────────────────────────────────
 router.get('/summary', async (req, res) => {
   try {
-    let students = await Student.find(buildFilter(req.user, req.query));
+    let students = await Student.find(buildFilter(req.user, req.query, true));
     if (hasScopedFilter(req.query)) {
       students = students.filter(s => getScopedSemesters(s, req.query).length || getScopedAttendance(s, req.query).length);
     }
@@ -426,6 +427,9 @@ const scheduleSchema = new mongoose.Schema({
   createdBy:   String,
   department:  String,
   nextRun:     String,
+  lastRunAt:   String,
+  lastSentAt:  String,
+  lastError:   String,
 }, { timestamps: true });
 const Schedule = mongoose.models.Schedule || mongoose.model('Schedule', scheduleSchema);
 
@@ -472,7 +476,11 @@ function getNextRun(freq) {
 router.get('/export-pdf', async (req, res) => {
   try {
     const { reportType, title } = req.query;
-    const students = await Student.find(buildFilter(req.user, req.query)).limit(200);
+    let students = await Student.find(buildFilter(req.user, req.query, true)).limit(200);
+    if (hasScopedFilter(req.query)) {
+      students = students.filter(s => getScopedSemesters(s, req.query).length || getScopedAttendance(s, req.query).length);
+    }
+    const rows = buildScopedReportRows(reportType, students, req.query).slice(0, 200);
 
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
@@ -492,57 +500,52 @@ router.get('/export-pdf', async (req, res) => {
     doc.fontSize(9).fillColor('#333')
        .text(`Generated: ${new Date().toLocaleString('en-IN')}   |   Dept: ${req.user.department}   |   By: ${req.user.name}`, { align: 'right' });
 
-    // Table header
-    const headers = getHeaders(reportType);
-    const rowH = 20, startX = 40, colW = (doc.page.width - 80) / headers.length;
+    if (!rows.length) {
+      doc.moveDown(3);
+      doc.fontSize(14).fillColor('#64748b').font('Helvetica-Bold')
+        .text('No records found for the selected filters.', { align: 'center' });
+      doc.end();
+      return;
+    }
 
-    doc.rect(startX, doc.y + 6, doc.page.width - 80, rowH).fill('#1565c0');
-    headers.forEach((h, i) => {
-      doc.fontSize(8).fillColor('#fff').font('Helvetica-Bold')
-         .text(h, startX + i * colW + 4, doc.y - rowH + 6, { width: colW - 4 });
-    });
+    const headers = Object.keys(rows[0]);
+    const tableRows = rows.map(row => headers.map(header => row[header]));
+    const rowH = 20;
+    const startX = 40;
+    const maxRowsPerPage = 22;
+    const colW = (doc.page.width - 80) / headers.length;
 
-    // Rows
-    students.slice(0, 80).forEach((s, ri) => {
-      const row = getRow(s, reportType, ri + 1);
-      const y = doc.y;
-      if (y > 540) { doc.addPage(); }
-      if (ri % 2 === 0) doc.rect(startX, doc.y + 2, doc.page.width - 80, rowH - 2).fill('#e3f2fd');
-      row.forEach((cell, i) => {
-        doc.fontSize(7).fillColor('#222').font('Helvetica')
-           .text(String(cell ?? ''), startX + i * colW + 3, doc.y - rowH + 8, { width: colW - 4 });
+    const renderHeader = () => {
+      doc.rect(startX, doc.y + 6, doc.page.width - 80, rowH).fill('#1565c0');
+      headers.forEach((header, index) => {
+        doc.fontSize(8).fillColor('#fff').font('Helvetica-Bold')
+          .text(String(header), startX + index * colW + 4, doc.y - rowH + 6, { width: colW - 6 });
       });
-      doc.moveDown(0.3);
+      doc.moveDown(0.8);
+    };
+
+    renderHeader();
+
+    tableRows.forEach((row, rowIndex) => {
+      if (rowIndex > 0 && rowIndex % maxRowsPerPage === 0) {
+        doc.addPage();
+        renderHeader();
+      }
+
+      const y = doc.y;
+      if (rowIndex % 2 === 0) {
+        doc.rect(startX, y + 2, doc.page.width - 80, rowH - 2).fill('#e3f2fd');
+      }
+
+      row.forEach((cell, index) => {
+        doc.fontSize(7).fillColor('#222').font('Helvetica')
+          .text(String(cell ?? ''), startX + index * colW + 3, y + 6, { width: colW - 6, ellipsis: true });
+      });
+      doc.y = y + rowH;
     });
 
     doc.end();
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
-
-function getHeaders(type) {
-  const map = {
-    attendance: ['Roll No', 'Name', 'Department', 'Section', 'Batch', 'Avg Attendance %'],
-    marks:      ['Roll No', 'Name', 'Department', 'Section', 'CGPA', 'Semesters'],
-    backlogs:   ['Roll No', 'Name', 'Department', 'Section', 'Batch', 'Backlog Count', 'Repeated'],
-    cgpa:       ['Rank', 'Roll No', 'Name', 'Department', 'Batch', 'CGPA'],
-    risk:       ['Roll No', 'Name', 'Department', 'CGPA', 'Backlogs', 'Risk Factors'],
-    toppers:    ['Rank', 'Roll No', 'Name', 'Department', 'Batch', 'CGPA'],
-  };
-  return map[type] || ['Roll No', 'Name', 'Department', 'CGPA'];
-}
-function getRow(s, type, rank) {
-  const fc = {}; s.semesters?.forEach(sm => sm.subjects?.filter(sub=>sub.status==='fail').forEach(sub=>{fc[sub.subjectCode]=(fc[sub.subjectCode]||0)+1;}));
-  const repeated = Object.values(fc).filter(c=>c>1).length;
-  const avgAtt = s.attendance?.length ? (s.attendance.reduce((sum,a)=>sum+a.percentage,0)/s.attendance.length).toFixed(1) : '—';
-  const map = {
-    attendance: [s.rollNumber, s.name, s.department, s.section, s.batch, avgAtt],
-    marks:      [s.rollNumber, s.name, s.department, s.section, s.cgpa, s.semesters?.length],
-    backlogs:   [s.rollNumber, s.name, s.department, s.section, s.batch, s.backlogs?.length, repeated],
-    cgpa:       [rank, s.rollNumber, s.name, s.department, s.batch, s.cgpa],
-    risk:       [s.rollNumber, s.name, s.department, s.cgpa, s.backlogs?.length, '—'],
-    toppers:    [rank, s.rollNumber, s.name, s.department, s.batch, s.cgpa],
-  };
-  return (map[type] || [s.rollNumber, s.name, s.department, s.cgpa]);
-}
 
 module.exports = router;

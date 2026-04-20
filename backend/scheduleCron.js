@@ -19,6 +19,7 @@ const nodemailer = require('nodemailer');
 const XLSX      = require('xlsx');
 const mongoose  = require('mongoose');
 const Student   = require('./models/Student');
+const { buildScopedReportRows } = require('./lib/reportExports');
 
 // ── Lazy-load the Schedule model (defined in reports.js) ──────────────────
 function getScheduleModel() {
@@ -35,6 +36,9 @@ function getScheduleModel() {
       createdBy:   String,
       department:  String,
       nextRun:     String,
+      lastRunAt:   String,
+      lastSentAt:  String,
+      lastError:   String,
     }, { timestamps: true });
     return mongoose.model('Schedule', schema);
   }
@@ -57,165 +61,14 @@ function createTransporter() {
 
 // ── Report generators (returns flat array of row objects) ─────────────────
 async function generateReportData(reportType, filters = {}) {
-  const { department, batch, section, semester, academicYear } = filters;
+  const { department, batch, section } = filters;
+  const mongoFilter = {};
+  if (department) mongoFilter.department = department;
+  if (batch) mongoFilter.batch = batch;
+  if (section) mongoFilter.section = section;
 
-  // Build Mongo filter
-  const f = {};
-  if (department) f.department = department;
-  if (batch)      f.batch      = batch;
-  if (section)    f.section    = section;
-  if (semester)   f.currentSemester = parseInt(semester);
-
-  const students = await Student.find(f).sort({ rollNumber: 1 });
-
-  switch (reportType) {
-
-    case 'attendance': {
-      const threshold = parseFloat(filters.threshold) || 75;
-      return students.flatMap(s => {
-        const atts = s.attendance.filter(a =>
-          (!semester    || a.semester    === parseInt(semester)) &&
-          (!academicYear|| a.academicYear === academicYear)
-        );
-        return atts.map(a => ({
-          'Roll Number': s.rollNumber,
-          'Name':        s.name,
-          'Department':  s.department,
-          'Section':     s.section,
-          'Batch':       s.batch,
-          'Subject Code':    a.subjectCode,
-          'Subject Name':    a.subjectName,
-          'Semester':        a.semester,
-          'Academic Year':   a.academicYear,
-          'Total Classes':   a.totalClasses,
-          'Attended':        a.attendedClasses,
-          'Attendance %':    a.percentage,
-          'Status':          a.percentage >= threshold ? 'OK' : 'LOW',
-        }));
-      });
-    }
-
-    case 'marks': {
-      return students.flatMap(s => {
-        const sems = s.semesters.filter(sm =>
-          (!semester     || sm.semNumber    === parseInt(semester)) &&
-          (!academicYear || sm.academicYear === academicYear)
-        );
-        return sems.flatMap(sm =>
-          sm.subjects.map(sub => ({
-            'Roll Number':   s.rollNumber,
-            'Name':          s.name,
-            'Department':    s.department,
-            'Section':       s.section,
-            'Batch':         s.batch,
-            'Semester':      sm.semNumber,
-            'Academic Year': sm.academicYear,
-            'SGPA':          sm.sgpa,
-            'Subject Code':  sub.subjectCode,
-            'Subject Name':  sub.subjectName,
-            'Internal':      sub.internal,
-            'External':      sub.external,
-            'Total':         sub.total,
-            'Status':        sub.status,
-          }))
-        );
-      });
-    }
-
-    case 'backlogs': {
-      return students
-        .filter(s => s.backlogs.length > 0)
-        .map(s => {
-          const fc = {};
-          s.semesters.forEach(sm =>
-            sm.subjects.filter(sub => sub.status === 'fail').forEach(sub => {
-              fc[sub.subjectCode] = (fc[sub.subjectCode] || 0) + 1;
-            })
-          );
-          const repeated = Object.values(fc).filter(c => c > 1).length;
-          const totalCredits  = s.semesters.reduce((sum, sm) => sum + (sm.totalCredits  || 0), 0);
-          const earnedCredits = s.semesters.reduce((sum, sm) => sum + (sm.earnedCredits || 0), 0);
-          return {
-            'Roll Number':     s.rollNumber,
-            'Name':            s.name,
-            'Department':      s.department,
-            'Section':         s.section,
-            'Batch':           s.batch,
-            'CGPA':            s.cgpa,
-            'Backlog Count':   s.backlogs.length,
-            'Repeated Subjects': repeated,
-            'Pending Credits': totalCredits - earnedCredits,
-            'Backlog Codes':   s.backlogs.join(', '),
-          };
-        });
-    }
-
-    case 'cgpa': {
-      return students
-        .sort((a, b) => b.cgpa - a.cgpa)
-        .map((s, i) => ({
-          'Rank':        i + 1,
-          'Roll Number': s.rollNumber,
-          'Name':        s.name,
-          'Department':  s.department,
-          'Section':     s.section,
-          'Batch':       s.batch,
-          'CGPA':        s.cgpa,
-          'Backlogs':    s.backlogs.length,
-        }));
-    }
-
-    case 'risk': {
-      return students
-        .map(s => {
-          const lowCgpa     = s.cgpa < 6.0;
-          const multiBacklog = s.backlogs.length >= 2;
-          const lowAtt       = s.attendance.some(a => a.percentage < 65);
-          const factors = [
-            ...(lowCgpa      ? [`Low CGPA (${s.cgpa})`]            : []),
-            ...(multiBacklog ? [`${s.backlogs.length} backlogs`]   : []),
-            ...(lowAtt       ? ['Low attendance (<65%)']            : []),
-          ];
-          return { rollNumber: s.rollNumber, name: s.name, department: s.department,
-            section: s.section, batch: s.batch, cgpa: s.cgpa,
-            backlogCount: s.backlogs.length, riskScore: factors.length, riskFactors: factors };
-        })
-        .filter(s => s.riskScore > 0)
-        .sort((a, b) => b.riskScore - a.riskScore)
-        .map(s => ({
-          'Roll Number':  s.rollNumber,
-          'Name':         s.name,
-          'Department':   s.department,
-          'Section':      s.section,
-          'Batch':        s.batch,
-          'CGPA':         s.cgpa,
-          'Backlogs':     s.backlogCount,
-          'Risk Score':   s.riskScore,
-          'Risk Factors': s.riskFactors.join('; '),
-        }));
-    }
-
-    case 'toppers': {
-      const limit = parseInt(filters.limit) || 10;
-      return students
-        .sort((a, b) => b.cgpa - a.cgpa)
-        .slice(0, limit)
-        .map((s, i) => ({
-          'Rank':        i + 1,
-          'Roll Number': s.rollNumber,
-          'Name':        s.name,
-          'Department':  s.department,
-          'Batch':       s.batch,
-          'Section':     s.section,
-          'CGPA':        s.cgpa,
-          'Backlogs':    s.backlogs.length,
-          'Current Sem': s.currentSemester,
-        }));
-    }
-
-    default:
-      return [];
-  }
+  const students = await Student.find(mongoFilter).sort({ rollNumber: 1 });
+  return buildScopedReportRows(reportType, students, filters);
 }
 
 // ── Build Excel buffer from rows ──────────────────────────────────────────
@@ -246,9 +99,15 @@ function getNextRun(frequency) {
 // ── Send one scheduled report ─────────────────────────────────────────────
 async function processSchedule(schedule, transporter) {
   const { reportType, filters, frequency, email, label, department } = schedule;
+  const Schedule = getScheduleModel();
 
   if (!email) {
     console.warn(`⚠️  Schedule ${schedule._id} has no email — skipping`);
+    await Schedule.findByIdAndUpdate(schedule._id, {
+      nextRun: getNextRun(frequency),
+      lastRunAt: new Date().toISOString(),
+      lastError: 'No recipient email configured for this schedule.',
+    });
     return;
   }
 
@@ -258,6 +117,11 @@ async function processSchedule(schedule, transporter) {
 
     if (!rows.length) {
       console.log(`📭 Schedule "${label}" — no data found, skipping email`);
+      await Schedule.findByIdAndUpdate(schedule._id, {
+        nextRun: getNextRun(frequency),
+        lastRunAt: new Date().toISOString(),
+        lastError: 'No rows matched the current schedule filters.',
+      });
     } else {
       // Build Excel attachment
       const xlsxBuffer = buildExcel(rows, `${reportType} Report`);
@@ -317,14 +181,21 @@ async function processSchedule(schedule, transporter) {
       });
 
       console.log(`✅ Sent "${label}" report to ${email} (${rows.length} rows)`);
+      await Schedule.findByIdAndUpdate(schedule._id, {
+        nextRun: getNextRun(frequency),
+        lastRunAt: new Date().toISOString(),
+        lastSentAt: new Date().toISOString(),
+        lastError: '',
+      });
+      return;
     }
-
-    // Update nextRun regardless of whether email was sent
-    const Schedule = getScheduleModel();
-    await Schedule.findByIdAndUpdate(schedule._id, { nextRun: getNextRun(frequency) });
-
   } catch (err) {
     console.error(`❌ Failed to process schedule "${label}":`, err.message);
+    await Schedule.findByIdAndUpdate(schedule._id, {
+      nextRun: getNextRun(frequency),
+      lastRunAt: new Date().toISOString(),
+      lastError: err.message,
+    });
   }
 }
 
@@ -348,7 +219,11 @@ function startScheduleCron() {
       if (!transporter) {
         console.warn('⚠️  SMTP not configured — updating nextRun without sending emails');
         for (const s of due) {
-          await Schedule.findByIdAndUpdate(s._id, { nextRun: getNextRun(s.frequency) });
+          await Schedule.findByIdAndUpdate(s._id, {
+            nextRun: getNextRun(s.frequency),
+            lastRunAt: new Date().toISOString(),
+            lastError: 'SMTP is not configured on the server, so no email was sent.',
+          });
         }
         return;
       }

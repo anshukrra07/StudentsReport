@@ -50,11 +50,12 @@ export const exportToPDF = (title, headers, rows, filename = 'report') => {
     } else {
       // Fallback: plain text rows if autoTable plugin didn't load
       let y = 32;
+      const pageHeight = doc.internal.pageSize.getHeight();
       doc.setFontSize(8);
       rows.forEach(row => {
         doc.text(row.map(String).join('   '), 14, y);
         y += 8;
-        if (y > 190) { doc.addPage(); y = 14; }
+        if (y > pageHeight - 20) { doc.addPage(); y = 14; }
       });
     }
     doc.save(`${filename}.pdf`);
@@ -71,16 +72,58 @@ export const flattenForExport = (data, type) => {
         'Department': s.department,
         'Section': s.section,
         'Batch': s.batch,
-        'Subjects Count': s.attendance?.length || s.lowSubjects?.length || 0
+        ...(s.subjectCode
+          ? {
+              'Subject Code': s.subjectCode,
+              'Subject Name': s.subjectName,
+              'Semester': s.semester,
+              'Total Students': s.totalStudents,
+              'Average Attendance %': s.avgPercentage,
+              'Below Threshold': s.belowThreshold,
+            }
+          : s.totalStudents
+            ? {
+                'Total Students': s.totalStudents,
+                'Average Attendance %': s.avgAttendance,
+                'Below Threshold': s.belowThreshold,
+              }
+            : {
+                'Average Attendance %': s.avgAttendance ?? s.lowestPct ?? '',
+                'Subjects Count': s.subjects ?? 0,
+                'Low Subjects': Array.isArray(s.lowSubjects) ? s.lowSubjects.map(item => `${item.code || item.subject} (${item.percentage}%)`).join('; ') : s.belowThreshold,
+              }),
       }));
     case 'marks':
       return data.map(s => ({
-        'Roll Number': s.rollNumber,
-        'Name': s.name,
-        'Department': s.department,
-        'Section': s.section,
-        'CGPA': s.cgpa,
-        'Semesters': s.semesters?.length || 0
+        ...(s.rollNumber
+          ? {
+              'Roll Number': s.rollNumber,
+              'Name': s.name,
+              'Department': s.department,
+              'Section': s.section,
+              'CGPA': s.cgpa,
+              'Semesters': s.semesters?.length || 0,
+            }
+          : s.subjectCode
+            ? {
+                'Subject Code': s.subjectCode,
+                'Subject Name': s.subjectName,
+                'Semester': s.semester,
+                'Average Total': s.avgTotal,
+                'Pass Count': s.passCount,
+                'Fail Count': s.failCount,
+                'Pass Rate %': s.passRate,
+              }
+            : {
+                'Semester': s.semester,
+                'Academic Year': s.academicYear,
+                'Total Students': s.totalStudents,
+                'Pass': s.pass,
+                'Fail': s.fail,
+                'Detained': s.detained,
+                'Average SGPA': s.avgSgpa,
+                'Pass %': s.passPercent,
+              }),
       }));
     case 'backlogs':
       return data.map(s => ({
@@ -90,24 +133,36 @@ export const flattenForExport = (data, type) => {
         'Section': s.section,
         'Batch': s.batch,
         'Backlog Count': s.backlogCount,
+        'Pending Credits': s.pendingCredits,
+        'Repeated Subjects': s.repeatedSubjects?.map(item => item.code || item).join(', '),
         'Backlogs': s.backlogs?.join(', ')
       }));
     case 'cgpa':
       return data.map(s => ({
-        'Rank': s.rank,
-        'Roll Number': s.rollNumber,
-        'Name': s.name,
-        'Department': s.department,
-        'Batch': s.batch,
-        'CGPA': s.cgpa
+        ...(s.rank
+          ? {
+              'Rank': s.rank,
+              'Roll Number': s.rollNumber,
+              'Name': s.name,
+              'Department': s.department,
+              'Batch': s.batch,
+              'CGPA': s.cgpa,
+            }
+          : {
+              'CGPA Range': s.label,
+              'Student Count': s.count,
+            })
       }));
     case 'risk':
       return data.map(s => ({
         'Roll Number': s.rollNumber,
         'Name': s.name,
         'Department': s.department,
+        'Section': s.section,
+        'Batch': s.batch,
         'CGPA': s.cgpa,
         'Backlogs': s.backlogCount,
+        'Risk Score': s.riskScore,
         'Risk Factors': s.riskFactors?.join('; ')
       }));
     default:

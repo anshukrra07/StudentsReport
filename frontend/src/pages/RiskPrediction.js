@@ -27,7 +27,7 @@ function getSemesterOptions(batch, academicYear) {
 }
 
 function RiskBar({ value }) {
-  const color = value >= 70 ? '#ef4444' : value >= 40 ? '#f97316' : '#10b981';
+  const color = value >= 70 ? '#ef4444' : value >= 35 ? '#f97316' : '#10b981';
   return (
     <div style={{ display:'flex', alignItems:'center', gap:8 }}>
       <div style={{ flex:1, height:8, background:'#f1f5f9', borderRadius:4, overflow:'hidden' }}>

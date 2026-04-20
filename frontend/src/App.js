@@ -5,6 +5,7 @@ import Dashboard from './pages/Dashboard';
 import Chatbot from './pages/Chatbot';
 import SchedulePage from './pages/SchedulePage';
 import RiskPrediction from './pages/RiskPrediction';
+import StudentProfilePage from './pages/StudentProfilePage';
 import Sidebar from './components/Sidebar';
 import ReportPage from './components/ReportPage';
 
@@ -371,6 +372,7 @@ function AppContent() {
       <main style={{marginLeft:256,flex:1,overflowY:'auto',minHeight:'100vh'}}>
         {page==='dashboard'   ? <Dashboard/>
         :page==='chatbot'     ? <Chatbot/>
+        :page==='student-profile' ? <StudentProfilePage/>
         :page==='schedule'    ? <SchedulePage/>
         :page==='ai-risk'     ? <RiskPrediction/>
         :CFGS[page]           ? <ReportPage reportType={page} {...CFGS[page]}/>

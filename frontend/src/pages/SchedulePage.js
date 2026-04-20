@@ -154,6 +154,16 @@ export default function SchedulePage() {
                       </div>
                       <div style={{color:'#a8d8ea',fontSize:11}}>{fr?.icon} {fr?.label} · 📧 {s.email}</div>
                       <div style={{color:'#7ec8e3',fontSize:10,marginTop:3}}>Next: {new Date(s.nextRun).toLocaleDateString('en-IN')}</div>
+                      {s.lastSentAt && (
+                        <div style={{color:'#69f0ae',fontSize:10,marginTop:3}}>
+                          Last sent: {new Date(s.lastSentAt).toLocaleString('en-IN')}
+                        </div>
+                      )}
+                      {s.lastError && (
+                        <div style={{color:'#ff8a80',fontSize:10,marginTop:3,maxWidth:320,lineHeight:1.4}}>
+                          Last issue: {s.lastError}
+                        </div>
+                      )}
                     </div>
                     <button onClick={()=>del(s.id)}
                       style={{background:'rgba(255,23,68,0.1)',border:'1px solid rgba(255,23,68,0.25)',color:'#ff8a80',borderRadius:7,padding:'5px 10px',fontSize:12,cursor:'pointer',fontFamily:"'Nunito',sans-serif",fontWeight:700,transition:'all 0.2s'}}

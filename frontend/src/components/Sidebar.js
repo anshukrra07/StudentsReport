@@ -4,6 +4,7 @@ import { useAuth } from '../context/AuthContext';
 const NAV = [
   { id:'dashboard',  icon:'⊞', label:'Dashboard',        color:'#2563eb', bg:'#eff6ff' },
   { id:'chatbot',    icon:'💬', label:'AI Report Chatbot', color:'#7c3aed', bg:'#faf5ff' },
+  { id:'student-profile', icon:'🧑‍🎓', label:'Student Profile', color:'#0f766e', bg:'#f0fdfa' },
   { id:'ai-risk',    icon:'🤖', label:'AI Risk Prediction',color:'#f97316', bg:'#fff7ed' },
   { id:'attendance', icon:'📋', label:'Attendance',        color:'#0ea5e9', bg:'#f0f9ff' },
   { id:'marks',      icon:'📊', label:'Marks & Results',   color:'#f59e0b', bg:'#fffbeb' },
