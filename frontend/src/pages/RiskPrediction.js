@@ -7,6 +7,25 @@ const RISK_COLOR = { HIGH:'#ef4444', MEDIUM:'#f97316', LOW:'#10b981' };
 const RISK_BG    = { HIGH:'#fff1f2', MEDIUM:'#fff7ed', LOW:'#f0fdf4' };
 const RISK_BORDER= { HIGH:'#fecdd3', MEDIUM:'#fed7aa', LOW:'#a7f3d0' };
 
+function getSemesterOptions(batch, academicYear) {
+  const all = [1, 2, 3, 4, 5, 6, 7, 8];
+  if (!batch || !academicYear) return all;
+
+  const batchMatch = String(batch).match(/^(\d{4})-(\d{4})$/);
+  const yearMatch = String(academicYear).match(/^(\d{4})-(\d{4})$/);
+  if (!batchMatch || !yearMatch) return all;
+
+  const batchStart = Number(batchMatch[1]);
+  const yearStart = Number(yearMatch[1]);
+  const firstSemester = ((yearStart - batchStart) * 2) + 1;
+
+  if (firstSemester < 1 || firstSemester > 8) return all;
+
+  const options = [firstSemester];
+  if (firstSemester + 1 <= 8) options.push(firstSemester + 1);
+  return options;
+}
+
 function RiskBar({ value }) {
   const color = value >= 70 ? '#ef4444' : value >= 40 ? '#f97316' : '#10b981';
   return (
@@ -128,8 +147,14 @@ export default function RiskPrediction() {
   const [search,  setSearch]  = useState('');
   const [hov,     setHov]     = useState('');
   const [expanded,setExpanded]= useState(null);
+  const semesterOptions = getSemesterOptions(filters.batch, filters.academicYear);
 
   useEffect(()=>{ axios.get(`${API}/students/meta`).then(r=>setMeta(r.data)).catch(()=>{}); },[API]);
+  useEffect(() => {
+    if (filters.semester && !semesterOptions.includes(parseInt(filters.semester, 10))) {
+      setFilters(prev => ({ ...prev, semester: '' }));
+    }
+  }, [filters.semester, semesterOptions]);
 
   const fetchRisk = useCallback(async () => {
     setLoading(true); setSearched(true);
@@ -223,6 +248,22 @@ export default function RiskPrediction() {
               <select style={selStyle(ps.color)} value={filters.section||''} onChange={e=>setFilters({...filters,section:e.target.value})}>
                 <option value="">All Sections</option>
                 {meta.sections.map(s=><option key={s}>{s}</option>)}
+              </select>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Academic Year</label>
+              <select style={selStyle(ps.color)} value={filters.academicYear||''} onChange={e=>setFilters({...filters,academicYear:e.target.value})}>
+                <option value="">All Years</option>
+                {['2021-2022','2022-2023','2023-2024','2024-2025','2025-2026'].map(y=>(
+                  <option key={y} value={y}>{y}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
+              <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Semester</label>
+              <select style={selStyle(ps.color)} value={filters.semester||''} onChange={e=>setFilters({...filters,semester:e.target.value})}>
+                <option value="">All Semesters</option>
+                {semesterOptions.map(s=><option key={s} value={s}>Semester {s}</option>)}
               </select>
             </div>
           </div>
@@ -339,7 +380,9 @@ export default function RiskPrediction() {
                             </td>
                             <td style={{ color: s.backlogCount>0?'#ef4444':'#10b981', padding:'10px 14px', borderBottom:'1px solid #f1f5f9', fontWeight:700 }}>{s.backlogCount}</td>
                             <td style={{ padding:'10px 14px', borderBottom:'1px solid #f1f5f9' }}>
-                              <span style={{ color: s.cgpaTrend<0?'#ef4444':'#10b981', fontWeight:700 }}>{s.cgpaTrend>0?'+':''}{s.cgpaTrend}</span>
+                              <span style={{ color: s.cgpaTrend == null ? '#94a3b8' : s.cgpaTrend < 0 ? '#ef4444' : '#10b981', fontWeight:700 }}>
+                                {s.cgpaTrend == null ? '—' : `${s.cgpaTrend > 0 ? '+' : ''}${s.cgpaTrend}`}
+                              </span>
                             </td>
                             <td style={{ padding:'10px 14px', borderBottom:'1px solid #f1f5f9', minWidth:120 }}>
                               <RiskBar value={s.riskProbability} />

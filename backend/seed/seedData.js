@@ -258,12 +258,12 @@ async function seed() {
   console.log('🗑  Cleared old data');
 
   const users = [
-    {username:'admin',      password:'admin123',  name:'System Administrator',       role:'admin',   department:'Admin', email:'admin@vfstr.ac.in'},
-    {username:'deo_cse',    password:'deo123',    name:'K. Rajesh Kumar',            role:'deo',     department:'CSE',   email:'deo.cse@vfstr.ac.in'},
-    {username:'deo_ece',    password:'deo123',    name:'G. Sunita Sharma',           role:'deo',     department:'ECE',   email:'deo.ece@vfstr.ac.in'},
-    {username:'deo_mech',   password:'deo123',    name:'P. Ramakrishna',             role:'deo',     department:'MECH',  email:'deo.mech@vfstr.ac.in'},
-    {username:'hod_cse',    password:'hod123',    name:'Prof. P. Venkata Rao',       role:'hod',     department:'CSE',   email:'hod.cse@vfstr.ac.in'},
-    {username:'faculty_cse',password:'faculty123',name:'Dr. B. Priya Nair',         role:'faculty', department:'CSE',   email:'faculty.cse@vfstr.ac.in'},
+    {username:'admin',      password:'Welcome@123', name:'System Administrator',     role:'admin',   department:'Admin', email:'admin@vfstr.ac.in'},
+    {username:'deo_cse',    password:'Welcome@123', name:'K. Rajesh Kumar',          role:'deo',     department:'CSE',   email:'deo.cse@vfstr.ac.in'},
+    {username:'deo_ece',    password:'Welcome@123', name:'G. Sunita Sharma',         role:'deo',     department:'ECE',   email:'deo.ece@vfstr.ac.in'},
+    {username:'deo_mech',   password:'Welcome@123', name:'P. Ramakrishna',           role:'deo',     department:'MECH',  email:'deo.mech@vfstr.ac.in'},
+    {username:'hod_cse',    password:'Welcome@123', name:'Prof. P. Venkata Rao',     role:'hod',     department:'CSE',   email:'hod.cse@vfstr.ac.in'},
+    {username:'faculty_cse',password:'Welcome@123', name:'Dr. B. Priya Nair',        role:'faculty', department:'CSE',   email:'faculty.cse@vfstr.ac.in'},
   ];
   for(const u of users){ const d=new User(u); await d.save(); }
   console.log(`✅ ${users.length} users seeded`);
@@ -285,7 +285,7 @@ async function seed() {
   console.log('  CSE 2021-2025 Section A: 211FA04001, 211FA04002...');
   console.log('  CSE 2022-2026 Section A: 221FA04001, 221FA04002...');
   console.log('  CSE 2023-2027 Section A: 231FA04001, 231FA04002...');
-  console.log('\nLogin: admin/admin123  |  deo_cse/deo123  |  hod_cse/hod123');
+  console.log('\nLogin: admin/Welcome@123  |  deo_cse/Welcome@123  |  hod_cse/Welcome@123');
   await mongoose.disconnect();
   process.exit(0);
 }

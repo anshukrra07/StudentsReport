@@ -41,6 +41,7 @@ export default function SchedulePage() {
   };
 
   const del = async id => {
+    if (!window.confirm('Delete this schedule? This cannot be undone.')) return;
     await axios.delete(`${API}/reports/schedule/${id}`).catch(()=>{});
     load();
   };

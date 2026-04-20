@@ -26,6 +26,7 @@ function VoiceWaveform({ active }) {
 
 export default function LoginPage() {
   const { login } = useAuth();
+  const showDemoAccess = process.env.NODE_ENV === 'development';
   const [form,   setForm]    = useState({ username:'', password:'' });
   const [error,  setError]   = useState('');
   const [loading,setLoad]    = useState(false);
@@ -111,10 +112,10 @@ export default function LoginPage() {
   };
 
   const demos = [
-    { label:'Admin',   u:'admin',   p:'admin123', color:'#f97316', bg:'#fff7ed', icon:'⚙️' },
-    { label:'DEO CSE', u:'deo_cse', p:'deo123',   color:'#2563eb', bg:'#eff6ff', icon:'🎓' },
-    { label:'DEO ECE', u:'deo_ece', p:'deo123',   color:'#0ea5e9', bg:'#f0f9ff', icon:'🎓' },
-    { label:'HOD CSE', u:'hod_cse', p:'hod123',   color:'#7c3aed', bg:'#faf5ff', icon:'👨‍💼' },
+    { label:'Admin',   u:'admin',   p:'Welcome@123', color:'#f97316', bg:'#fff7ed', icon:'⚙️' },
+    { label:'DEO CSE', u:'deo_cse', p:'Welcome@123', color:'#2563eb', bg:'#eff6ff', icon:'🎓' },
+    { label:'DEO ECE', u:'deo_ece', p:'Welcome@123', color:'#0ea5e9', bg:'#f0f9ff', icon:'🎓' },
+    { label:'HOD CSE', u:'hod_cse', p:'Welcome@123', color:'#7c3aed', bg:'#faf5ff', icon:'👨‍💼' },
   ];
 
   const fields = [
@@ -313,31 +314,32 @@ export default function LoginPage() {
               </div>
             )}
 
-            {/* Demo */}
-            <div style={S.demoSection}>
-              <div style={S.divRow}>
-                <div style={S.divLine}/><span style={S.divTxt}>Quick Demo Access</span><div style={S.divLine}/>
+            {showDemoAccess && (
+              <div style={S.demoSection}>
+                <div style={S.divRow}>
+                  <div style={S.divLine}/><span style={S.divTxt}>Quick Demo Access</span><div style={S.divLine}/>
+                </div>
+                <div style={S.demoGrid}>
+                  {demos.map(d => (
+                    <button key={d.label}
+                      style={{
+                        ...S.demoBtn,
+                        background:  hov===d.label ? d.bg : '#f8faff',
+                        borderColor: hov===d.label ? d.color : '#e2e8f8',
+                        color:       hov===d.label ? d.color : '#64748b',
+                        transform:   hov===d.label ? 'translateY(-3px)' : 'none',
+                        boxShadow:   hov===d.label ? `0 6px 20px ${d.color}30` : 'none',
+                      }}
+                      onClick={() => setForm({ username:d.u, password:d.p })}
+                      onMouseEnter={() => setHov(d.label)} onMouseLeave={() => setHov('')}
+                    >
+                      <span style={{ fontSize:16 }}>{d.icon}</span>
+                      <span style={{ fontWeight:700, fontSize:12 }}>{d.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div style={S.demoGrid}>
-                {demos.map(d => (
-                  <button key={d.label}
-                    style={{
-                      ...S.demoBtn,
-                      background:  hov===d.label ? d.bg : '#f8faff',
-                      borderColor: hov===d.label ? d.color : '#e2e8f8',
-                      color:       hov===d.label ? d.color : '#64748b',
-                      transform:   hov===d.label ? 'translateY(-3px)' : 'none',
-                      boxShadow:   hov===d.label ? `0 6px 20px ${d.color}30` : 'none',
-                    }}
-                    onClick={() => setForm({ username:d.u, password:d.p })}
-                    onMouseEnter={() => setHov(d.label)} onMouseLeave={() => setHov('')}
-                  >
-                    <span style={{ fontSize:16 }}>{d.icon}</span>
-                    <span style={{ fontWeight:700, fontSize:12 }}>{d.label}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
             <p style={{ textAlign:'center', color:'#cbd5e1', fontSize:11, marginTop:16 }}>
               Vignan's Foundation for Science, Technology and Research<br/>

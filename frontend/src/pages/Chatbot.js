@@ -49,6 +49,41 @@ const TYPE_META = {
   toppers:   { color:'#10b981', bg:'#f0fdf4', label:'Top Performers', icon:'🏆' },
 };
 
+const CONV_REPLIES = [
+  { match: /^(hey|hi|hello|helo|hii|namaste|sup|yo)\b/i,
+    reply: `👋 Hello! I'm the VFSTR Report Assistant.\n\nI can help you generate academic reports. Try:\n• "Show attendance for CSE"\n• "Top 10 CGPA performers"\n• "At-risk students batch 2022-2026"\n• "Backlogs for ECE semester 3"\n\nOr use the 🎤 mic button to speak your query!` },
+  { match: /^(how are you|how r u|how do you do|what's up|wassup)/i,
+    reply: `😊 I'm doing great, thanks for asking!\n\nI'm here to help you generate department reports instantly.\n\nWhat report would you like? Try:\n• "Show low attendance CSE"\n• "CGPA distribution"\n• "At-risk students"` },
+  { match: /^(thank|thanks|thank you|thx|ty|tq)\b/i,
+    reply: `😊 You're welcome! Feel free to ask for any report anytime.\n\nNeed anything else? Just type your query or use the 🎤 mic!` },
+  { match: /^(bye|goodbye|see you|cya|ok bye)\b/i,
+    reply: `👋 Goodbye! Come back anytime you need a report.\n\nHave a great day! 😊` },
+  { match: /^(help|what can you do|what do you do|capabilities|features)\b/i,
+    reply: `🤖 I can generate these reports for VFSTR:\n\n📋 Attendance — section, subject, dept, low\n📊 Marks — internal, external, results, performance\n⚠️  Backlogs — list, repeated, pending\n⭐ CGPA — distribution, rankings, toppers\n⚡ Risk — low CGPA, backlogs, attendance\n🏆 Top Performers\n\nJust type naturally! Examples:\n• "Show CSE semester 3 attendance"\n• "Which ECE students are at risk?"\n• "Top 5 students by CGPA"` },
+  { match: /^(who are you|what are you|introduce yourself)\b/i,
+    reply: `🎓 I'm the VFSTR Report Assistant — an AI-powered chatbot for Vignan's Foundation for Science, Technology & Research.\n\nI help DEOs and faculty generate academic reports instantly using natural language.\n\nJust ask me for any report!` },
+  { match: /^(ok|okay|k|fine|good|great|nice|cool|sure|alright)\s*$/i,
+    reply: `👍 Great! What report would you like?\n\nTry: "Show attendance for CSE" or "At-risk students"` },
+];
+
+const GENERIC_REPORT = /^(generate|create|make|show|get|give|produce|fetch|pull|run|display|view|open|load)\s+(a\s+)?(report|reports|data|all|everything|summary|details|full|complete|academic|department|student)\s*$/i;
+
+const QUICK_PICKS = [
+  { label:'📋 Attendance',    query:'Show section-wise attendance',        color:'#0ea5e9', bg:'#f0f9ff' },
+  { label:'📊 Marks',         query:'Show external marks report',          color:'#f59e0b', bg:'#fffbeb' },
+  { label:'⚠️ Backlogs',      query:'List students with backlogs',         color:'#ef4444', bg:'#fff1f2' },
+  { label:'⭐ CGPA Rankings', query:'Show student CGPA ranking list',      color:'#8b5cf6', bg:'#f5f3ff' },
+  { label:'⚡ At-Risk',       query:'Show at-risk students report',        color:'#f97316', bg:'#fff7ed' },
+  { label:'🏆 Top Performers',query:'Show top 10 performers by CGPA',     color:'#10b981', bg:'#f0fdf4' },
+  { label:'📉 Low Attendance',query:'Low attendance students below 75%',  color:'#0284c7', bg:'#e0f2fe' },
+  { label:'📈 CGPA Dist.',    query:'CGPA distribution across departments',color:'#7c3aed', bg:'#faf5ff' },
+];
+
+const STATIC_PROMPTS = new Set([
+  ...SUGG_GROUPS.flatMap(g => g.items),
+  ...QUICK_PICKS.map(q => q.query),
+]);
+
 // ── NLP Parser ────────────────────────────────────────────────────────────
 function parseMsg(msg) {
   const l = msg.toLowerCase();
@@ -294,44 +329,6 @@ export default function Chatbot() {
 
   const push = (role,text,data=null,type=null,subType='',intent='',quickPicks=null) =>
     setMsgs(p=>[...p,{role,text,data,type,subType,intent,quickPicks,time:new Date()}]);
-
-  // ── Conversational replies (no AI/keyword needed) ────────────────────
-  const CONV_REPLIES = [
-    { match: /^(hey|hi|hello|helo|hii|namaste|sup|yo)\b/i,
-      reply: `👋 Hello! I'm the VFSTR Report Assistant.\n\nI can help you generate academic reports. Try:\n• "Show attendance for CSE"\n• "Top 10 CGPA performers"\n• "At-risk students batch 2022-2026"\n• "Backlogs for ECE semester 3"\n\nOr use the 🎤 mic button to speak your query!` },
-    { match: /^(how are you|how r u|how do you do|what's up|wassup)/i,
-      reply: `😊 I'm doing great, thanks for asking!\n\nI'm here to help you generate department reports instantly.\n\nWhat report would you like? Try:\n• "Show low attendance CSE"\n• "CGPA distribution"\n• "At-risk students"` },
-    { match: /^(thank|thanks|thank you|thx|ty|tq)\b/i,
-      reply: `😊 You're welcome! Feel free to ask for any report anytime.\n\nNeed anything else? Just type your query or use the 🎤 mic!` },
-    { match: /^(bye|goodbye|see you|cya|ok bye)\b/i,
-      reply: `👋 Goodbye! Come back anytime you need a report.\n\nHave a great day! 😊` },
-    { match: /^(help|what can you do|what do you do|capabilities|features)\b/i,
-      reply: `🤖 I can generate these reports for VFSTR:\n\n📋 Attendance — section, subject, dept, low\n📊 Marks — internal, external, results, performance\n⚠️  Backlogs — list, repeated, pending\n⭐ CGPA — distribution, rankings, toppers\n⚡ Risk — low CGPA, backlogs, attendance\n🏆 Top Performers\n\nJust type naturally! Examples:\n• "Show CSE semester 3 attendance"\n• "Which ECE students are at risk?"\n• "Top 5 students by CGPA"` },
-    { match: /^(who are you|what are you|introduce yourself)\b/i,
-      reply: `🎓 I'm the VFSTR Report Assistant — an AI-powered chatbot for Vignan's Foundation for Science, Technology & Research.\n\nI help DEOs and faculty generate academic reports instantly using natural language.\n\nJust ask me for any report!` },
-    { match: /^(ok|okay|k|fine|good|great|nice|cool|sure|alright)\s*$/i,
-      reply: `👍 Great! What report would you like?\n\nTry: "Show attendance for CSE" or "At-risk students"` },
-  ];
-
-  // ── Generic "generate report" phrases → show quick-pick buttons ───────
-  const GENERIC_REPORT = /^(generate|create|make|show|get|give|produce|fetch|pull|run|display|view|open|load)\s+(a\s+)?(report|reports|data|all|everything|summary|details|full|complete|academic|department|student)\s*$/i;
-
-  const QUICK_PICKS = [
-    { label:'📋 Attendance',    query:'Show section-wise attendance',        color:'#0ea5e9', bg:'#f0f9ff' },
-    { label:'📊 Marks',         query:'Show external marks report',          color:'#f59e0b', bg:'#fffbeb' },
-    { label:'⚠️ Backlogs',      query:'List students with backlogs',         color:'#ef4444', bg:'#fff1f2' },
-    { label:'⭐ CGPA Rankings', query:'Show student CGPA ranking list',      color:'#8b5cf6', bg:'#f5f3ff' },
-    { label:'⚡ At-Risk',       query:'Show at-risk students report',        color:'#f97316', bg:'#fff7ed' },
-    { label:'🏆 Top Performers',query:'Show top 10 performers by CGPA',     color:'#10b981', bg:'#f0fdf4' },
-    { label:'📉 Low Attendance',query:'Low attendance students below 75%',  color:'#0284c7', bg:'#e0f2fe' },
-    { label:'📈 CGPA Dist.',    query:'CGPA distribution across departments',color:'#7c3aed', bg:'#faf5ff' },
-  ];
-
-  // ── Build a flat set of all static suggestion strings for O(1) lookup ──
-  const STATIC_PROMPTS = new Set([
-    ...SUGG_GROUPS.flatMap(g => g.items),
-    ...QUICK_PICKS.map(q => q.query),
-  ]);
 
   // ── Smart send ────────────────────────────────────────────────────────
   // Static prompt  → keyword parser (instant, no API call)

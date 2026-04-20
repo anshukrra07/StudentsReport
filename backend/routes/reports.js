@@ -22,6 +22,65 @@ function buildFilter(user, query, skipSemester = false) {
   return f;
 }
 
+function matchesSemAndYear(recordSemester, recordAcademicYear, semester, academicYear) {
+  const semOk = !semester || recordSemester === parseInt(semester);
+  const yrOk = !academicYear || recordAcademicYear === academicYear;
+  return semOk && yrOk;
+}
+
+function getScopedSemesters(student, query = {}) {
+  const { semester, academicYear } = query;
+  return (student.semesters || []).filter(sm =>
+    matchesSemAndYear(sm.semNumber, sm.academicYear, semester, academicYear)
+  );
+}
+
+function getScopedAttendance(student, query = {}) {
+  const { semester, academicYear } = query;
+  return (student.attendance || []).filter(a =>
+    matchesSemAndYear(a.semester, a.academicYear, semester, academicYear)
+  );
+}
+
+function getScopedBacklogCodes(student, query = {}) {
+  const semesters = getScopedSemesters(student, query);
+  if (!query.semester && !query.academicYear) return student.backlogs || [];
+  const failedCodes = [...new Set(semesters.flatMap(sm =>
+    (sm.subjects || []).filter(sub => sub.status === 'fail').map(sub => sub.subjectCode)
+  ))];
+  if (failedCodes.length) return failedCodes;
+
+  // Import fallback: a student imported from the workbook may only have a
+  // student-level backlog count, not explicit failed subjects per semester.
+  if (semesters.length === 1 && (student.semesters || []).length === 1) {
+    return student.backlogs || [];
+  }
+
+  return [];
+}
+
+function getScopedScore(student, query = {}) {
+  const semesters = getScopedSemesters(student, query);
+  if (!query.semester && !query.academicYear) return student.cgpa || 0;
+  if (!semesters.length) return 0;
+  return parseFloat((semesters.reduce((sum, sm) => sum + (sm.sgpa || 0), 0) / semesters.length).toFixed(2));
+}
+
+function hasScopedFilter(query = {}) {
+  return !!(query.semester || query.academicYear);
+}
+
+function getScopedPendingCredits(student, query = {}) {
+  const semesters = hasScopedFilter(query) ? getScopedSemesters(student, query) : (student.semesters || []);
+  const totalCredits = semesters.reduce((sum, sm) => sum + (sm.totalCredits || 0), 0);
+  const earnedCredits = semesters.reduce((sum, sm) => sum + (sm.earnedCredits || 0), 0);
+  const explicitPending = totalCredits - earnedCredits;
+  if (explicitPending > 0) return explicitPending;
+
+  const backlogCount = getScopedBacklogCodes(student, query).length;
+  return backlogCount > 0 ? backlogCount * 4 : 0;
+}
+
 // ─── ATTENDANCE ────────────────────────────────────────────────────────
 router.get('/attendance', async (req, res) => {
   try {
@@ -32,11 +91,8 @@ router.get('/attendance', async (req, res) => {
 
     if (type === 'low_attendance') {
       students.forEach(s => {
-        const low = s.attendance.filter(a => {
-          const semOk = !semester || a.semester === parseInt(semester);
-          const yrOk  = !academicYear || a.academicYear === academicYear;
-          return semOk && yrOk && a.percentage < parseFloat(threshold);
-        });
+        const low = getScopedAttendance(s, req.query)
+          .filter(a => a.percentage < parseFloat(threshold));
         if (low.length) result.push({
           rollNumber: s.rollNumber, name: s.name,
           department: s.department, section: s.section, batch: s.batch,
@@ -52,9 +108,7 @@ router.get('/attendance', async (req, res) => {
     } else if (type === 'subject_wise') {
       const map = {};
       students.forEach(s => {
-        s.attendance.forEach(a => {
-          const semOk = !semester || a.semester === parseInt(semester);
-          if (!semOk) return;
+        getScopedAttendance(s, req.query).forEach(a => {
           if (!map[a.subjectCode]) map[a.subjectCode] = { subjectCode: a.subjectCode, subjectName: a.subjectName, semester: a.semester, students: [] };
           map[a.subjectCode].students.push({ rollNumber: s.rollNumber, name: s.name, department: s.department, section: s.section, percentage: a.percentage, attended: a.attendedClasses, total: a.totalClasses });
         });
@@ -70,8 +124,9 @@ router.get('/attendance', async (req, res) => {
       // Department-wise attendance analysis
       const deptMap = {};
       students.forEach(s => {
+        const semAtts = getScopedAttendance(s, req.query);
+        if (hasScopedFilter(req.query) && !semAtts.length) return;
         if (!deptMap[s.department]) deptMap[s.department] = { department: s.department, students: [], totalAtt: 0, count: 0 };
-        const semAtts = s.attendance.filter(a => !semester || a.semester === parseInt(semester));
         const avg = semAtts.length ? semAtts.reduce((sum, a) => sum + a.percentage, 0) / semAtts.length : 0;
         deptMap[s.department].totalAtt += avg;
         deptMap[s.department].count++;
@@ -88,7 +143,8 @@ router.get('/attendance', async (req, res) => {
     } else {
       // section_wise (default) — return per student with per-subject attendance
       result = students.map(s => {
-        const semAtts = s.attendance.filter(a => !semester || a.semester === parseInt(semester));
+        const semAtts = getScopedAttendance(s, req.query);
+        if (hasScopedFilter(req.query) && !semAtts.length) return null;
         const avg = semAtts.length
           ? parseFloat((semAtts.reduce((sum,a)=>sum+a.percentage,0)/semAtts.length).toFixed(1))
           : 0;
@@ -111,7 +167,7 @@ router.get('/attendance', async (req, res) => {
             status:     a.percentage>=parseFloat(threshold)?'OK':'LOW',
           })),
         };
-      });
+      }).filter(Boolean);
       result.sort((a,b)=>a.avgAttendance-b.avgAttendance);
     }
 
@@ -122,7 +178,7 @@ router.get('/attendance', async (req, res) => {
 // ─── MARKS ─────────────────────────────────────────────────────────────
 router.get('/marks', async (req, res) => {
   try {
-    const { type, semester, academicYear } = req.query;
+    const { type } = req.query;
     const students = await Student.find(buildFilter(req.user, req.query, true));
     let result = [];
 
@@ -130,10 +186,7 @@ router.get('/marks', async (req, res) => {
       // Semester result summaries — pass/fail stats per semester
       const semMap = {};
       students.forEach(s => {
-        s.semesters.forEach(sm => {
-          const semOk = !semester || sm.semNumber === parseInt(semester);
-          const yrOk  = !academicYear || sm.academicYear === academicYear;
-          if (!semOk || !yrOk) return;
+        getScopedSemesters(s, req.query).forEach(sm => {
           const key = sm.semNumber;
           if (!semMap[key]) semMap[key] = { semester: key, academicYear: sm.academicYear, pass: 0, fail: 0, detained: 0, totalStudents: 0, avgSgpa: 0, sgpaSum: 0 };
           semMap[key].totalStudents++;
@@ -148,7 +201,7 @@ router.get('/marks', async (req, res) => {
     } else if (type === 'subject_performance') {
       const map = {};
       students.forEach(s => {
-        const sems = semester ? s.semesters.filter(sm => sm.semNumber === parseInt(semester)) : s.semesters;
+        const sems = getScopedSemesters(s, req.query);
         sems.forEach(sm => {
           sm.subjects.forEach(sub => {
             if (!map[sub.subjectCode]) map[sub.subjectCode] = { subjectCode: sub.subjectCode, subjectName: sub.subjectName, semester: sm.semNumber, students: [] };
@@ -167,8 +220,8 @@ router.get('/marks', async (req, res) => {
     } else {
       // internal / external
       result = students.map(s => {
-        const sems = semester ? s.semesters.filter(sm => sm.semNumber === parseInt(semester)) : s.semesters;
-        const yrSems = academicYear ? sems.filter(sm => sm.academicYear === academicYear) : sems;
+        const yrSems = getScopedSemesters(s, req.query);
+        if (hasScopedFilter(req.query) && !yrSems.length) return null;
         return {
           rollNumber: s.rollNumber, name: s.name, department: s.department,
           section: s.section, batch: s.batch, cgpa: s.cgpa,
@@ -177,9 +230,9 @@ router.get('/marks', async (req, res) => {
             subjects: type === 'internal'
               ? sm.subjects.map(sub => ({ code: sub.subjectCode, name: sub.subjectName, marks: sub.internal, max: sub.maxInternal, status: sub.status }))
               : sm.subjects.map(sub => ({ code: sub.subjectCode, name: sub.subjectName, marks: sub.external, max: sub.maxExternal, total: sub.total, status: sub.status }))
-          }))
+            }))
         };
-      });
+      }).filter(Boolean);
     }
     res.json({ type, count: result.length, data: result });
   } catch (err) { res.status(500).json({ message: err.message }); }
@@ -189,14 +242,15 @@ router.get('/marks', async (req, res) => {
 router.get('/backlogs', async (req, res) => {
   try {
     const { subtype } = req.query;
-    const filter = buildFilter(req.user, req.query);
-    filter.backlogs = { $exists: true, $ne: [] };
-    const students = await Student.find(filter);
+    const students = await Student.find(buildFilter(req.user, req.query));
 
     let result = students.map(s => {
+      const scopedSemesters = getScopedSemesters(s, req.query);
+      const semesters = (req.query.semester || req.query.academicYear) ? scopedSemesters : s.semesters;
+      const scopedBacklogs = getScopedBacklogCodes(s, req.query);
       // Find repeated subjects (failed more than once)
       const subjectFailCount = {};
-      s.semesters.forEach(sm => {
+      semesters.forEach(sm => {
         sm.subjects.filter(sub => sub.status === 'fail').forEach(sub => {
           subjectFailCount[sub.subjectCode] = (subjectFailCount[sub.subjectCode] || 0) + 1;
         });
@@ -206,28 +260,28 @@ router.get('/backlogs', async (req, res) => {
         .map(([code, count]) => ({ code, failCount: count }));
 
       // Pending course completions
-      const totalCredits  = s.semesters.reduce((sum, sm) => sum + (sm.totalCredits || 0), 0);
-      const earnedCredits = s.semesters.reduce((sum, sm) => sum + (sm.earnedCredits || 0), 0);
-      const pendingCredits = totalCredits - earnedCredits;
+      const totalCredits  = semesters.reduce((sum, sm) => sum + (sm.totalCredits || 0), 0);
+      const earnedCredits = semesters.reduce((sum, sm) => sum + (sm.earnedCredits || 0), 0);
+      const pendingCredits = getScopedPendingCredits(s, req.query);
 
       return {
         rollNumber: s.rollNumber, name: s.name,
         department: s.department, section: s.section, batch: s.batch,
         cgpa: s.cgpa,
-        backlogCount: s.backlogs.length,
-        backlogs: s.backlogs,
+        backlogCount: scopedBacklogs.length,
+        backlogs: scopedBacklogs,
         repeatedSubjects,
         repeatedCount: repeatedSubjects.length,
         pendingCredits,
         totalCredits,
         earnedCredits,
-        failedSubjects: s.semesters.flatMap(sm =>
+        failedSubjects: semesters.flatMap(sm =>
           sm.subjects.filter(sub => sub.status === 'fail').map(sub => ({
             sem: sm.semNumber, code: sub.subjectCode, name: sub.subjectName, total: sub.total
           }))
         )
       };
-    });
+    }).filter(s => s.backlogCount > 0 || s.pendingCredits > 0);
 
     // Filter by subtype
     if (subtype === 'repeated') result = result.filter(s => s.repeatedCount > 0);
@@ -242,7 +296,11 @@ router.get('/backlogs', async (req, res) => {
 router.get('/cgpa', async (req, res) => {
   try {
     const { type } = req.query;
-    const students = await Student.find(buildFilter(req.user, req.query)).sort({ cgpa: -1 });
+    const students = await Student.find(buildFilter(req.user, req.query));
+    const rankedStudents = students
+      .map(s => ({ student: s, score: getScopedScore(s, req.query) }))
+      .filter(({ score }) => !req.query.semester && !req.query.academicYear ? true : score > 0)
+      .sort((a, b) => b.score - a.score);
 
     if (type === 'distribution') {
       const ranges = [
@@ -253,26 +311,26 @@ router.get('/cgpa', async (req, res) => {
         { label: '5.0–5.9',  min: 5.0, max: 5.99, count: 0, color: '#ff6e40' },
         { label: 'Below 5',  min: 0,   max: 4.99, count: 0, color: '#ff5252' },
       ];
-      students.forEach(s => {
-        const r = ranges.find(r => s.cgpa >= r.min && s.cgpa <= r.max);
+      rankedStudents.forEach(({ score }) => {
+        const r = ranges.find(r => score >= r.min && score <= r.max);
         if (r) r.count++;
       });
-      return res.json({ type, totalStudents: students.length, distribution: ranges });
+      return res.json({ type, totalStudents: rankedStudents.length, distribution: ranges });
     }
 
     if (type === 'toppers') {
       const limit = parseInt(req.query.limit) || 10;
-      return res.json({ type, data: students.slice(0, limit).map((s, i) => ({
-        rank: i + 1, rollNumber: s.rollNumber, name: s.name,
-        department: s.department, batch: s.batch, section: s.section, cgpa: s.cgpa,
-        backlogs: s.backlogs.length
+      return res.json({ type, data: rankedStudents.slice(0, limit).map(({ student, score }, i) => ({
+        rank: i + 1, rollNumber: student.rollNumber, name: student.name,
+        department: student.department, batch: student.batch, section: student.section, cgpa: score,
+        backlogs: getScopedBacklogCodes(student, req.query).length
       }))});
     }
 
     // full ranking
-    res.json({ count: students.length, data: students.map((s, i) => ({
-      rank: i + 1, rollNumber: s.rollNumber, name: s.name,
-      department: s.department, section: s.section, batch: s.batch, cgpa: s.cgpa
+    res.json({ count: rankedStudents.length, data: rankedStudents.map(({ student, score }, i) => ({
+      rank: i + 1, rollNumber: student.rollNumber, name: student.name,
+      department: student.department, section: student.section, batch: student.batch, cgpa: score
     }))});
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -284,16 +342,21 @@ router.get('/risk', async (req, res) => {
     const students = await Student.find(buildFilter(req.user, req.query));
 
     let atRisk = students.map(s => {
-      const lowCgpa      = s.cgpa < 6.0;
-      const multiBacklog = s.backlogs.length >= 2;
-      const lowAtt       = s.attendance.some(a => a.percentage < 65);
+      const scopedSemesters = getScopedSemesters(s, req.query);
+      const scopedAttendance = getScopedAttendance(s, req.query);
+      if (hasScopedFilter(req.query) && !scopedSemesters.length && !scopedAttendance.length) return null;
+      const scopedScore = getScopedScore(s, req.query);
+      const scopedBacklogs = getScopedBacklogCodes(s, req.query);
+      const lowCgpa      = scopedScore < 6.0;
+      const multiBacklog = scopedBacklogs.length >= 2;
+      const lowAtt       = scopedAttendance.some(a => a.percentage < 65);
       const riskFactors  = [
-        ...(lowCgpa       ? [`Low CGPA (${s.cgpa})`] : []),
-        ...(multiBacklog  ? [`${s.backlogs.length} backlogs`] : []),
+        ...(lowCgpa       ? [`Low CGPA (${scopedScore})`] : []),
+        ...(multiBacklog  ? [`${scopedBacklogs.length} backlogs`] : []),
         ...(lowAtt        ? ['Low attendance (<65%)'] : []),
       ];
-      return { rollNumber: s.rollNumber, name: s.name, department: s.department, section: s.section, batch: s.batch, cgpa: s.cgpa, backlogCount: s.backlogs.length, riskFactors, riskScore: riskFactors.length, lowCgpa, multiBacklog, lowAtt };
-    }).filter(s => s.riskScore > 0);
+      return { rollNumber: s.rollNumber, name: s.name, department: s.department, section: s.section, batch: s.batch, cgpa: scopedScore, backlogCount: scopedBacklogs.length, riskFactors, riskScore: riskFactors.length, lowCgpa, multiBacklog, lowAtt };
+    }).filter(s => s && s.riskScore > 0);
 
     // Filter by specific risk type
     if (riskType === 'low_cgpa')      atRisk = atRisk.filter(s => s.lowCgpa);
@@ -309,12 +372,16 @@ router.get('/risk', async (req, res) => {
 router.get('/top-performers', async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 10;
-    const students = await Student.find(buildFilter(req.user, req.query))
-      .sort({ cgpa: -1 }).limit(limit);
-    res.json({ count: students.length, data: students.map((s, i) => ({
-      rank: i + 1, rollNumber: s.rollNumber, name: s.name,
-      department: s.department, batch: s.batch, section: s.section,
-      cgpa: s.cgpa, backlogs: s.backlogs.length, currentSemester: s.currentSemester
+    const students = await Student.find(buildFilter(req.user, req.query));
+    const rankedStudents = students
+      .map(s => ({ student: s, score: getScopedScore(s, req.query) }))
+      .filter(({ score }) => !req.query.semester && !req.query.academicYear ? true : score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit);
+    res.json({ count: rankedStudents.length, data: rankedStudents.map(({ student, score }, i) => ({
+      rank: i + 1, rollNumber: student.rollNumber, name: student.name,
+      department: student.department, batch: student.batch, section: student.section,
+      cgpa: score, backlogs: getScopedBacklogCodes(student, req.query).length, currentSemester: student.currentSemester
     }))});
   } catch (err) { res.status(500).json({ message: err.message }); }
 });
@@ -322,16 +389,25 @@ router.get('/top-performers', async (req, res) => {
 // ─── DASHBOARD SUMMARY ─────────────────────────────────────────────────
 router.get('/summary', async (req, res) => {
   try {
-    const students = await Student.find(buildFilter(req.user, req.query));
+    let students = await Student.find(buildFilter(req.user, req.query));
+    if (hasScopedFilter(req.query)) {
+      students = students.filter(s => getScopedSemesters(s, req.query).length || getScopedAttendance(s, req.query).length);
+    }
     const total        = students.length;
-    const avgCGPA      = total ? parseFloat((students.reduce((s, x) => s + x.cgpa, 0) / total).toFixed(2)) : 0;
-    const withBacklogs = students.filter(s => s.backlogs.length > 0).length;
-    const lowAttendance= students.filter(s => s.attendance.some(a => a.percentage < 75)).length;
-    const atRisk       = students.filter(s => s.cgpa < 6.0 || s.backlogs.length >= 2 || s.attendance.some(a => a.percentage < 65)).length;
-    const toppers      = students.filter(s => s.cgpa >= 9.0).length;
+    const scopedScores = students.map(s => getScopedScore(s, req.query));
+    const avgCGPA      = total ? parseFloat((scopedScores.reduce((sum, score) => sum + score, 0) / total).toFixed(2)) : 0;
+    const withBacklogs = students.filter(s => getScopedBacklogCodes(s, req.query).length > 0).length;
+    const lowAttendance= students.filter(s => getScopedAttendance(s, req.query).some(a => a.percentage < 75)).length;
+    const atRisk       = students.filter(s => {
+      const score = getScopedScore(s, req.query);
+      const backlogs = getScopedBacklogCodes(s, req.query);
+      const attendance = getScopedAttendance(s, req.query);
+      return score < 6.0 || backlogs.length >= 2 || attendance.some(a => a.percentage < 65);
+    }).length;
+    const toppers      = students.filter(s => getScopedScore(s, req.query) >= 9.0).length;
     const repeatedSubj = students.filter(s => {
       const fc = {}; let has = false;
-      s.semesters.forEach(sm => sm.subjects.filter(sub=>sub.status==='fail').forEach(sub=>{fc[sub.subjectCode]=(fc[sub.subjectCode]||0)+1;if(fc[sub.subjectCode]>1)has=true;}));
+      getScopedSemesters(s, req.query).forEach(sm => sm.subjects.filter(sub=>sub.status==='fail').forEach(sub=>{fc[sub.subjectCode]=(fc[sub.subjectCode]||0)+1;if(fc[sub.subjectCode]>1)has=true;}));
       return has;
     }).length;
     res.json({ total, avgCGPA, withBacklogs, lowAttendance, atRisk, toppers, repeatedSubj });

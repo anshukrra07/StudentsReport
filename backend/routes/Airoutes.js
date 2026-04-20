@@ -25,6 +25,96 @@ function buildFilter(user, q = {}) {
   return f;
 }
 
+function matchesSemAndYear(recordSemester, recordAcademicYear, semester, academicYear) {
+  const semOk = !semester || recordSemester === parseInt(semester, 10);
+  const yrOk = !academicYear || recordAcademicYear === academicYear;
+  return semOk && yrOk;
+}
+
+function hasScopedFilter(query = {}) {
+  return !!(query.semester || query.academicYear);
+}
+
+function getScopedSemesters(student, query = {}) {
+  const { semester, academicYear } = query;
+  return (student.semesters || []).filter(sm =>
+    matchesSemAndYear(sm.semNumber, sm.academicYear, semester, academicYear)
+  );
+}
+
+function getScopedAttendance(student, query = {}) {
+  const { semester, academicYear } = query;
+  return (student.attendance || []).filter(a =>
+    matchesSemAndYear(a.semester, a.academicYear, semester, academicYear)
+  );
+}
+
+function getScopedCgpa(student, query = {}) {
+  const semesters = getScopedSemesters(student, query);
+  if (!hasScopedFilter(query)) return student.cgpa || 0;
+  if (!semesters.length) return 0;
+  return parseFloat((semesters.reduce((sum, sm) => sum + (sm.sgpa || 0), 0) / semesters.length).toFixed(2));
+}
+
+function getScopedBacklogCount(student, query = {}) {
+  if (!hasScopedFilter(query)) return (student.backlogs || []).length;
+
+  const scopedSemesters = getScopedSemesters(student, query);
+  const failedCodes = new Set(
+    scopedSemesters.flatMap(sm =>
+      (sm.subjects || []).filter(sub => sub.status === 'fail').map(sub => sub.subjectCode)
+    )
+  );
+
+  if (failedCodes.size) return failedCodes.size;
+
+  // Import fallback: one workbook row per student stores backlog count only at student level.
+  if (scopedSemesters.length === 1 && (student.semesters || []).length === 1) {
+    return (student.backlogs || []).length;
+  }
+
+  return 0;
+}
+
+function getScopedTrend(student, query = {}) {
+  const semesters = getScopedSemesters(student, query)
+    .slice()
+    .sort((a, b) => a.semNumber - b.semNumber);
+
+  if (semesters.length < 2) return null;
+
+  return parseFloat((semesters[semesters.length - 1].sgpa - semesters[semesters.length - 2].sgpa).toFixed(2));
+}
+
+function getRiskFactors({ cgpa, avgAtt, backlogCount, cgpaTrend, dangerSubjects }) {
+  const factors = [];
+
+  if (cgpa < 5.0) factors.push(`Critical CGPA (${cgpa}, +40)`);
+  else if (cgpa < 6.0) factors.push(`Low CGPA (${cgpa}, +28)`);
+  else if (cgpa < 7.0) factors.push(`Below-target CGPA (${cgpa}, +14)`);
+  else if (cgpa < 8.0) factors.push(`Moderate CGPA watch (${cgpa}, +4)`);
+
+  if (avgAtt < 60) factors.push(`Critical attendance ${avgAtt}% (+25)`);
+  else if (avgAtt < 65) factors.push(`Low attendance ${avgAtt}% (+18)`);
+  else if (avgAtt < 75) factors.push(`Attendance below 75% (${avgAtt}%, +10)`);
+  else if (avgAtt < 85) factors.push(`Attendance watch ${avgAtt}% (+3)`);
+
+  if (backlogCount >= 5) factors.push(`${backlogCount} active backlogs (+20)`);
+  else if (backlogCount >= 3) factors.push(`${backlogCount} active backlogs (+14)`);
+  else if (backlogCount >= 1) factors.push(`${backlogCount} active backlog(s) (+7)`);
+
+  if (cgpaTrend !== null) {
+    if (cgpaTrend < -1.5) factors.push(`Sharp CGPA decline (${cgpaTrend}, +10)`);
+    else if (cgpaTrend < -0.5) factors.push(`CGPA declining (${cgpaTrend}, +6)`);
+    else if (cgpaTrend < 0) factors.push(`Slight CGPA decline (${cgpaTrend}, +2)`);
+  }
+
+  if (dangerSubjects >= 3) factors.push(`${dangerSubjects} subject(s) below 40 marks (+5)`);
+  else if (dangerSubjects >= 1) factors.push(`${dangerSubjects} subject(s) below 40 marks (+2)`);
+
+  return factors;
+}
+
 const GEMINI_MODELS = [
   process.env.GEMINI_MODEL,
   'gemini-2.5-flash-lite-preview-06-17',
@@ -270,18 +360,21 @@ router.get('/predict-risk', async (req, res) => {
     const students = await Student.find(buildFilter(req.user, req.query));
 
     const predictions = students.map(s => {
-      const cgpa     = s.cgpa || 0;
-      const attPcts  = s.attendance.map(a => a.percentage);
-      const avgAtt   = attPcts.length
-        ? parseFloat((attPcts.reduce((a, b) => a + b, 0) / attPcts.length).toFixed(1)) : 100;
+      const scopedSemesters = getScopedSemesters(s, req.query);
+      const scopedAttendance = getScopedAttendance(s, req.query);
+      if (hasScopedFilter(req.query) && !scopedSemesters.length && !scopedAttendance.length) return null;
 
-      const sems = [...s.semesters].sort((a, b) => a.semNumber - b.semNumber);
-      let cgpaTrend = 0;
-      if (sems.length >= 2)
-        cgpaTrend = parseFloat((sems[sems.length - 1].sgpa - sems[sems.length - 2].sgpa).toFixed(2));
+      const cgpa = getScopedCgpa(s, req.query);
+      const attPcts = scopedAttendance.map(a => a.percentage);
+      const avgAtt = attPcts.length
+        ? parseFloat((attPcts.reduce((a, b) => a + b, 0) / attPcts.length).toFixed(1))
+        : 100;
 
-      const dangerSubjects = sems.flatMap(sm => sm.subjects.filter(sub => sub.total < 40)).length;
-      const backlogCount   = s.backlogs.length;
+      const cgpaTrend = getScopedTrend(s, req.query);
+      const dangerSubjects = scopedSemesters.flatMap(sm =>
+        (sm.subjects || []).filter(sub => (sub.total || 0) < 40)
+      ).length;
+      const backlogCount = getScopedBacklogCount(s, req.query);
 
       let score = 0;
       // CGPA: 40 pts
@@ -299,23 +392,18 @@ router.get('/predict-risk', async (req, res) => {
       else if (backlogCount >= 3) score += 14;
       else if (backlogCount >= 1) score += 7;
       // Trend: 10 pts
-      if (cgpaTrend < -1.5)      score += 10;
-      else if (cgpaTrend < -0.5) score += 6;
-      else if (cgpaTrend < 0)    score += 2;
+      if (cgpaTrend !== null) {
+        if (cgpaTrend < -1.5)      score += 10;
+        else if (cgpaTrend < -0.5) score += 6;
+        else if (cgpaTrend < 0)    score += 2;
+      }
       // Danger subs: 5 pts
       if (dangerSubjects >= 3)      score += 5;
       else if (dangerSubjects >= 1) score += 2;
 
       const riskProbability = Math.min(100, score);
-      const riskLevel = riskProbability >= 70 ? 'HIGH' : riskProbability >= 40 ? 'MEDIUM' : 'LOW';
-
-      const riskFactors = [
-        ...(cgpa < 6.0         ? [`Low CGPA (${cgpa})`]                         : []),
-        ...(avgAtt < 75        ? [`Avg attendance ${avgAtt}%`]                   : []),
-        ...(backlogCount > 0   ? [`${backlogCount} active backlog(s)`]           : []),
-        ...(cgpaTrend < -0.5   ? [`CGPA declining (${cgpaTrend} last sem)`]      : []),
-        ...(dangerSubjects > 0 ? [`${dangerSubjects} subject(s) below 40 marks`] : []),
-      ];
+      const riskLevel = riskProbability >= 70 ? 'HIGH' : riskProbability >= 35 ? 'MEDIUM' : 'LOW';
+      const riskFactors = getRiskFactors({ cgpa, avgAtt, backlogCount, cgpaTrend, dangerSubjects });
 
       return {
         rollNumber: s.rollNumber, name: s.name,
@@ -323,7 +411,7 @@ router.get('/predict-risk', async (req, res) => {
         cgpa, avgAttendance: avgAtt, backlogCount, cgpaTrend, dangerSubjects,
         riskProbability, riskLevel, riskFactors,
       };
-    });
+    }).filter(Boolean);
 
     predictions.sort((a, b) => b.riskProbability - a.riskProbability);
 
@@ -347,30 +435,39 @@ router.get('/predict-risk', async (req, res) => {
 router.get('/insights', async (req, res) => {
   try {
     const filter   = buildFilter(req.user, req.query);
-    const students = await Student.find(filter);
+    let students = await Student.find(filter);
+    if (hasScopedFilter(req.query)) {
+      students = students.filter(s => getScopedSemesters(s, req.query).length || getScopedAttendance(s, req.query).length);
+    }
+
     if (!students.length)
       return res.json({ narrative: 'No data found for selected filters.', insights: [], recommendations: [] });
 
     const total    = students.length;
-    const avgCgpa  = parseFloat((students.reduce((s, x) => s + x.cgpa, 0) / total).toFixed(2));
-    const withBack = students.filter(s => s.backlogs.length > 0).length;
-    const lowAtt   = students.filter(s => s.attendance.some(a => a.percentage < 75)).length;
-    const atRisk   = students.filter(s => s.cgpa < 6.0 || s.backlogs.length >= 2).length;
-    const toppers  = students.filter(s => s.cgpa >= 9.0).length;
-    const passRate = parseFloat(((students.filter(s => s.backlogs.length === 0).length / total) * 100).toFixed(1));
+    const avgCgpa  = parseFloat((students.reduce((s, x) => s + getScopedCgpa(x, req.query), 0) / total).toFixed(2));
+    const withBack = students.filter(s => getScopedBacklogCount(s, req.query) > 0).length;
+    const lowAtt   = students.filter(s => getScopedAttendance(s, req.query).some(a => a.percentage < 75)).length;
+    const atRisk   = students.filter(s => {
+      const score = getScopedCgpa(s, req.query);
+      const backlogs = getScopedBacklogCount(s, req.query);
+      return score < 6.0 || backlogs >= 2 || getScopedAttendance(s, req.query).some(a => a.percentage < 65);
+    }).length;
+    const toppers  = students.filter(s => getScopedCgpa(s, req.query) >= 9.0).length;
+    const passRate = parseFloat((((students.filter(s => getScopedBacklogCount(s, req.query) === 0).length) / total) * 100).toFixed(1));
 
     const dist = { '9-10': 0, '8-9': 0, '7-8': 0, '6-7': 0, 'below 6': 0 };
     students.forEach(s => {
-      if (s.cgpa >= 9)      dist['9-10']++;
-      else if (s.cgpa >= 8) dist['8-9']++;
-      else if (s.cgpa >= 7) dist['7-8']++;
-      else if (s.cgpa >= 6) dist['6-7']++;
-      else                  dist['below 6']++;
+      const score = getScopedCgpa(s, req.query);
+      if (score >= 9)      dist['9-10']++;
+      else if (score >= 8) dist['8-9']++;
+      else if (score >= 7) dist['7-8']++;
+      else if (score >= 6) dist['6-7']++;
+      else                 dist['below 6']++;
     });
 
     const semMap = {};
     students.forEach(s =>
-      s.semesters.forEach(sm => {
+      getScopedSemesters(s, req.query).forEach(sm => {
         if (!semMap[sm.semNumber]) semMap[sm.semNumber] = [];
         semMap[sm.semNumber].push(sm.sgpa);
       })
@@ -382,9 +479,13 @@ router.get('/insights', async (req, res) => {
       }))
       .sort((a, b) => a.sem - b.sem);
 
+    const selectedDepartment = req.query.department || (req.user.role === 'admin' ? 'all departments' : req.user.department);
     const statsPayload = {
-      department: req.query.department || req.user.department,
+      department: selectedDepartment,
       batch: req.query.batch || 'all batches',
+      section: req.query.section || 'all sections',
+      semester: req.query.semester || 'all semesters',
+      academicYear: req.query.academicYear || 'all academic years',
       total, avgCgpa, withBacklogs: withBack, lowAttendance: lowAtt,
       atRisk, toppers, passRate, cgpaDistribution: dist, sgpaTrend,
     };
@@ -433,7 +534,7 @@ Generate 5-7 insights and 3 recommendations. Be specific with numbers. Highlight
     ];
 
     res.json({
-      narrative: `The ${req.query.department || req.user.department} department has ${total} students with an average CGPA of ${avgCgpa}. ${atRisk} students require immediate academic intervention. The overall pass rate stands at ${passRate}% with ${toppers} high performers achieving CGPA above 9.0.`,
+      narrative: `The ${selectedDepartment} slice has ${total} students with an average CGPA of ${avgCgpa}. ${atRisk} students require immediate academic intervention. The overall pass rate stands at ${passRate}% with ${toppers} high performers achieving CGPA above 9.0.`,
       insights, recommendations, stats: statsPayload,
     });
   } catch (err) {

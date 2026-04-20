@@ -37,7 +37,15 @@ router.get('/meta', async (req, res) => {
       Student.distinct('section', matchStage)
     ]);
 
-    res.json({ departments, batches, sections });
+    const clean = values => values
+      .filter(v => v !== null && v !== undefined && String(v).trim() !== '')
+      .sort((a, b) => String(a).localeCompare(String(b), undefined, { numeric: true }));
+
+    res.json({
+      departments: clean(departments),
+      batches: clean(batches),
+      sections: clean(sections)
+    });
   } catch (err) {
     res.status(500).json({ message: err.message });
   }

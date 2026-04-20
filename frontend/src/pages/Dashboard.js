@@ -58,15 +58,19 @@ export default function Dashboard() {
   );
 
   const PIE_COLORS = ['#10b981','#7c3aed','#f97316'];
+  const backlogBucket = sum?.withBacklogs || 0;
+  const atRiskOnly = Math.max(0, (sum?.atRisk || 0) - backlogBucket);
+  const normalStudents = Math.max(0, (sum?.total || 0) - backlogBucket - atRiskOnly);
   const pieData = [
-    { name:'Normal',   value:Math.max(0,(sum?.total||0)-(sum?.atRisk||0)-(sum?.withBacklogs||0)) },
-    { name:'At Risk',  value:sum?.atRisk||0 },
-    { name:'Backlogs', value:sum?.withBacklogs||0 },
+    { name:'Normal',   value:normalStudents },
+    { name:'At Risk',  value:atRiskOnly },
+    { name:'Backlogs', value:backlogBucket },
   ];
   const BAR_COLORS = ['#2563eb','#4f46e5','#7c3aed','#ec4899','#f97316','#f59e0b'];
   const BLOCKS = { all:{ img:'/campus/all.jpg', label:'Campus Aerial View' }, n:{ img:'/campus/n_block.jpg', label:'N-Block' }, h:{ img:'/campus/h_block_new.jpg', label:'H-Block' }, u:{ img:'/campus/u_block_new.jpg', label:'U-Block' } };
   const hr = time.getHours();
   const greet = hr<12?'Good Morning ☀️':hr<17?'Good Afternoon 🌤️':'Good Evening 🌙';
+  const scopeLabel = user?.role === 'admin' ? 'All Departments' : `${user?.department} Department`;
 
   return (
     <div style={{ minHeight:'100vh',background:'#f0f4ff',fontFamily:"'Plus Jakarta Sans',sans-serif" }}>
@@ -84,7 +88,7 @@ export default function Dashboard() {
               {greet}, <span style={{ color:'#fbbf24' }}>{user?.name?.split(' ')[0]}</span>!
             </h1>
             <p style={{ color:'rgba(255,255,255,0.6)',fontSize:13,marginTop:6 }}>
-              {user?.department} Department  ·  {user?.role?.toUpperCase()} Access
+              {scopeLabel}  ·  {user?.role?.toUpperCase()} Access
             </p>
             <div style={{ display:'flex',gap:8,marginTop:10 }}>
               {['Vadlamudi, Guntur','NAAC A+','NBA Accredited'].map(t=>(
@@ -148,7 +152,7 @@ export default function Dashboard() {
             <div style={chartHead}><span style={chartTitle}>🏛️ Campus Blocks</span><span style={chartSub}>Hover to view</span></div>
             <div style={{ display:'flex',gap:6,marginBottom:10 }}>
               {Object.entries(BLOCKS).map(([k,v])=>(
-                <button key={k} onClick={()=>setBlock(k)} onMouseEnter={()=>setBlock(k)}
+                <button key={k} onMouseEnter={()=>setBlock(k)}
                   style={{ flex:1,padding:'6px 0',borderRadius:8,border:`1.5px solid ${block===k?'#2563eb':'#e2e8f8'}`,background:block===k?'linear-gradient(135deg,#eff6ff,#f5f3ff)':'#f8faff',color:block===k?'#2563eb':'#94a3b8',fontSize:11,fontWeight:700,cursor:'pointer',transition:'all 0.2s' }}>
                   {v.label}
                 </button>
@@ -173,10 +177,10 @@ export default function Dashboard() {
           <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:16 }}>
             <div style={{ color:'#64748b',fontSize:13,fontWeight:600 }}>📌 Quick Insights</div>
             {[
-              { label:'Pass Rate', value: sum?.total ? `${(((sum.total-sum.withBacklogs)/sum.total)*100).toFixed(1)}%` : '—', color:'#10b981' },
+              { label:'No Backlogs', value: sum?.total ? `${(((sum.total-sum.withBacklogs)/sum.total)*100).toFixed(1)}%` : '—', color:'#10b981' },
               { label:'Attendance OK', value: sum?.total ? `${(((sum.total-sum.lowAttendance)/sum.total)*100).toFixed(1)}%` : '—', color:'#2563eb' },
               { label:'Repeated Subjects', value: sum?.repeatedSubj||0, color:'#f97316' },
-              { label:'Dept', value: user?.department, color:'#7c3aed' },
+              { label:'Scope', value: scopeLabel, color:'#7c3aed' },
             ].map(q=>(
               <div key={q.label} style={{ display:'flex',alignItems:'center',gap:8 }}>
                 <div style={{ width:10,height:10,borderRadius:'50%',background:q.color }}/>
@@ -227,4 +231,3 @@ const cardStyle = { background:'#fff',border:'1px solid #e2e8f8',borderRadius:16
 const chartHead  = { display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12 };
 const chartTitle = { fontFamily:"'Sora',sans-serif",color:'#1e2d4a',fontSize:14,fontWeight:700 };
 const chartSub   = { color:'#94a3b8',fontSize:11 };
-

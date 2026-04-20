@@ -5,7 +5,8 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
-    "seed": "node seed/seedData.js"
+    "seed": "node seed/seedData.js",
+    "import:college": "node import/importCollegeWorkbook.js"
   },
   "dependencies": {
     "axios": "^1.13.6",

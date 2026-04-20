@@ -29,9 +29,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Warn loudly if JWT_SECRET is not set in environment
+// Refuse to boot with a predictable JWT configuration.
 if (!process.env.JWT_SECRET) {
-  console.warn('⚠️  WARNING: JWT_SECRET not set in .env — using insecure default. Set it before deploying!');
+  throw new Error('JWT_SECRET is required in the environment');
 }
 
 // MongoDB Connection

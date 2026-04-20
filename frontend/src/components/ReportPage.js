@@ -21,6 +21,22 @@ const PAGE_STYLE = {
   toppers:   { color:'#10b981', g:'linear-gradient(135deg,#10b981,#0ea5e9)', bg:'#f0fdf4', bd:'#a7f3d0' },
 };
 
+function getSemesterOptions(batch, academicYear) {
+  const all = [1,2,3,4,5,6,7,8];
+  if (!batch || !academicYear) return all;
+  const batchMatch = String(batch).match(/^(\d{4})-(\d{4})$/);
+  const yearMatch = String(academicYear).match(/^(\d{4})-(\d{4})$/);
+  if (!batchMatch || !yearMatch) return all;
+  const batchStart = Number(batchMatch[1]);
+  const yearStart = Number(yearMatch[1]);
+  const offsetYears = yearStart - batchStart;
+  const firstSemester = (offsetYears * 2) + 1;
+  if (firstSemester < 1 || firstSemester > 8) return all;
+  const options = [firstSemester];
+  if (firstSemester + 1 <= 8) options.push(firstSemester + 1);
+  return options;
+}
+
 export default function ReportPage({ reportType, title, icon, description, filterConfig, columns, columnSets }) {
   const { API, user } = useAuth();
   const [filters, setFilters]   = useState({});
@@ -34,6 +50,13 @@ export default function ReportPage({ reportType, title, icon, description, filte
   const [activeType, setActiveType] = useState('');
 
   const ps = PAGE_STYLE[reportType] || PAGE_STYLE.attendance;
+  const semesterOptions = getSemesterOptions(filters.batch, filters.academicYear);
+
+  useEffect(() => {
+    if (filters.semester && !semesterOptions.includes(parseInt(filters.semester, 10))) {
+      setFilters(prev => ({ ...prev, semester: '' }));
+    }
+  }, [filters.semester, semesterOptions]);
 
   useEffect(()=>{ axios.get(`${API}/students/meta`).then(r=>setMeta(r.data)).catch(()=>{}); },[API]);
 
@@ -163,7 +186,7 @@ export default function ReportPage({ reportType, title, icon, description, filte
             </Sel>
             <Sel label="Semester" value={filters.semester||''} color={ps.color} onChange={v=>setFilters({...filters,semester:v})}>
               <option value="">All Semesters</option>
-              {[1,2,3,4,5,6,7,8].map(s=><option key={s} value={s}>Semester {s}</option>)}
+              {semesterOptions.map(s=><option key={s} value={s}>Semester {s}</option>)}
             </Sel>
             {filterConfig?.showType && selTypes.length>0 && (
               <Sel label="Report Type" value={filters.type||''} color={ps.color} onChange={v=>setFilters({...filters,type:v})}>
