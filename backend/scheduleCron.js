@@ -20,6 +20,7 @@ const XLSX      = require('xlsx');
 const mongoose  = require('mongoose');
 const Student   = require('./models/Student');
 const { buildScopedReportRows } = require('./lib/reportExports');
+const { logAudit } = require('./lib/auditLogger');
 
 // ── Lazy-load the Schedule model (defined in reports.js) ──────────────────
 function getScheduleModel() {
@@ -108,6 +109,15 @@ async function processSchedule(schedule, transporter) {
       lastRunAt: new Date().toISOString(),
       lastError: 'No recipient email configured for this schedule.',
     });
+    await logAudit({
+      actor: { username: 'system', name: 'Scheduler', role: 'system', department },
+      action: 'schedule.run',
+      status: 'failure',
+      entityType: 'schedule',
+      entityId: schedule._id,
+      message: 'Scheduled report skipped because no recipient email was configured.',
+      metadata: { reportType, label, frequency },
+    });
     return;
   }
 
@@ -121,6 +131,15 @@ async function processSchedule(schedule, transporter) {
         nextRun: getNextRun(frequency),
         lastRunAt: new Date().toISOString(),
         lastError: 'No rows matched the current schedule filters.',
+      });
+      await logAudit({
+        actor: { username: 'system', name: 'Scheduler', role: 'system', department },
+        action: 'schedule.run',
+        status: 'failure',
+        entityType: 'schedule',
+        entityId: schedule._id,
+        message: 'Scheduled report produced no rows for the configured filters.',
+        metadata: { reportType, label, frequency, filters, rowCount: 0 },
       });
     } else {
       // Build Excel attachment
@@ -187,6 +206,15 @@ async function processSchedule(schedule, transporter) {
         lastSentAt: new Date().toISOString(),
         lastError: '',
       });
+      await logAudit({
+        actor: { username: 'system', name: 'Scheduler', role: 'system', department },
+        action: 'schedule.run',
+        status: 'success',
+        entityType: 'schedule',
+        entityId: schedule._id,
+        message: `Scheduled report "${label || reportType}" was emailed successfully.`,
+        metadata: { reportType, label, frequency, filters, rowCount: rows.length, email },
+      });
       return;
     }
   } catch (err) {
@@ -195,6 +223,15 @@ async function processSchedule(schedule, transporter) {
       nextRun: getNextRun(frequency),
       lastRunAt: new Date().toISOString(),
       lastError: err.message,
+    });
+    await logAudit({
+      actor: { username: 'system', name: 'Scheduler', role: 'system', department },
+      action: 'schedule.run',
+      status: 'failure',
+      entityType: 'schedule',
+      entityId: schedule._id,
+      message: `Scheduled report failed: ${err.message}`,
+      metadata: { reportType, label, frequency, filters, email },
     });
   }
 }
@@ -223,6 +260,15 @@ function startScheduleCron() {
             nextRun: getNextRun(s.frequency),
             lastRunAt: new Date().toISOString(),
             lastError: 'SMTP is not configured on the server, so no email was sent.',
+          });
+          await logAudit({
+            actor: { username: 'system', name: 'Scheduler', role: 'system', department: s.department },
+            action: 'schedule.run',
+            status: 'failure',
+            entityType: 'schedule',
+            entityId: s._id,
+            message: 'Scheduled report skipped because SMTP is not configured.',
+            metadata: { reportType: s.reportType, label: s.label, frequency: s.frequency, filters: s.filters || {}, email: s.email || '' },
           });
         }
         return;

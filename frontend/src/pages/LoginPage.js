@@ -112,10 +112,11 @@ export default function LoginPage() {
   };
 
   const demos = [
-    { label:'Admin',   u:'admin',   p:'Welcome@123', color:'#f97316', bg:'#fff7ed', icon:'⚙️' },
-    { label:'DEO CSE', u:'deo_cse', p:'Welcome@123', color:'#2563eb', bg:'#eff6ff', icon:'🎓' },
-    { label:'DEO ECE', u:'deo_ece', p:'Welcome@123', color:'#0ea5e9', bg:'#f0f9ff', icon:'🎓' },
-    { label:'HOD CSE', u:'hod_cse', p:'Welcome@123', color:'#7c3aed', bg:'#faf5ff', icon:'👨‍💼' },
+    { label:'Admin',   u:'admin',       p:'admin123',   color:'#f97316', bg:'#fff7ed', icon:'⚙️' },
+    { label:'DEO CSE', u:'deo_cse',     p:'deo123',     color:'#2563eb', bg:'#eff6ff', icon:'🎓' },
+    { label:'DEO ECE', u:'deo_ece',     p:'deo123',     color:'#0ea5e9', bg:'#f0f9ff', icon:'🎓' },
+    { label:'HOD CSE', u:'hod_cse',     p:'hod123',     color:'#7c3aed', bg:'#faf5ff', icon:'👨‍💼' },
+    { label:'Faculty', u:'faculty_cse', p:'faculty123', color:'#10b981', bg:'#f0fdf4', icon:'🧑‍🏫' },
   ];
 
   const fields = [
@@ -319,6 +320,9 @@ export default function LoginPage() {
                 <div style={S.divRow}>
                   <div style={S.divLine}/><span style={S.divTxt}>Quick Demo Access</span><div style={S.divLine}/>
                 </div>
+                <p style={S.demoNote}>
+                  Demo shortcuts match the current backend accounts.
+                </p>
                 <div style={S.demoGrid}>
                   {demos.map(d => (
                     <button key={d.label}
@@ -509,6 +513,7 @@ const S = {
   divRow:  { display:'flex', alignItems:'center', gap:12, marginBottom:12 },
   divLine: { flex:1, height:1, background:'#e2e8f8' },
   divTxt:  { color:'#94a3b8', fontSize:11, fontWeight:600, whiteSpace:'nowrap' },
+  demoNote:{ color:'#94a3b8', fontSize:11, margin:'0 0 10px' },
   demoGrid:{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8 },
   demoBtn: {
     display:'flex', alignItems:'center', gap:8,

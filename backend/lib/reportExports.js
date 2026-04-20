@@ -1,3 +1,5 @@
+const { isBatchAcademicYearCompatible } = require('./filterCompatibility');
+
 function matchesSemAndYear(recordSemester, recordAcademicYear, semester, academicYear) {
   const semOk = !semester || recordSemester === parseInt(semester, 10);
   const yrOk = !academicYear || recordAcademicYear === academicYear;
@@ -387,6 +389,10 @@ function buildTopperRows(students, query = {}) {
 }
 
 function buildScopedReportRows(reportType, students, query = {}) {
+  if (!isBatchAcademicYearCompatible(query.batch, query.academicYear)) {
+    return [];
+  }
+
   switch (reportType) {
     case 'attendance':
       return buildAttendanceRows(students, query);

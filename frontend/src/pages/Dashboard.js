@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
+import { useTheme } from '../context/ThemeContext';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, Legend } from 'recharts';
 
 const STATS = [
@@ -12,24 +13,24 @@ const STATS = [
   { key:'toppers',      label:'CGPA ≥ 9 Toppers', icon:'🏆', g:'linear-gradient(135deg,#10b981,#0ea5e9)', shadow:'rgba(16,185,129,0.3)',  delay:400 },
 ];
 
-function StatCard({ label, value, icon, g, shadow, delay }) {
+function StatCard({ label, value, icon, g, shadow, delay, dark }) {
   const [hov, setHov] = useState(false);
   return (
     <div onMouseEnter={()=>setHov(true)} onMouseLeave={()=>setHov(false)}
       style={{
-        background: hov ? g : '#fff',
+        background: hov ? g : dark ? '#111827' : '#fff',
         borderRadius:16, padding:'20px 18px', cursor:'default',
         transition:'all 0.35s cubic-bezier(0.34,1.56,0.64,1)',
         transform: hov?'translateY(-6px) scale(1.02)':'none',
-        boxShadow: hov?`0 18px 40px ${shadow}`:'0 2px 10px rgba(30,58,138,0.06)',
-        border: hov?'1.5px solid transparent':'1.5px solid #e2e8f8',
+        boxShadow: hov ? `0 18px 40px ${shadow}` : (dark ? '0 4px 18px rgba(0,0,0,0.25)' : '0 2px 10px rgba(30,58,138,0.06)'),
+        border: hov?'1.5px solid transparent':`1.5px solid ${dark?'#334155':'#e2e8f8'}`,
         animation:`fadeUp 0.5s ${delay}ms ease both`,
         position:'relative', overflow:'hidden',
       }}>
       {/* Shimmer on hover */}
       {hov && <div style={{ position:'absolute',top:0,left:'-100%',width:'60%',height:'100%',background:'linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent)',animation:'shimmer 0.8s ease' }}/>}
       <div style={{ fontSize:32,marginBottom:10,filter:hov?'none':'grayscale(0.2)' }}>{icon}</div>
-      <div style={{ fontFamily:"'Sora',sans-serif",fontSize:32,fontWeight:800,color:hov?'#fff':'#1e2d4a',lineHeight:1 }}>{value}</div>
+      <div style={{ fontFamily:"'Sora',sans-serif",fontSize:32,fontWeight:800,color:hov?'#fff':dark?'#e2e8f0':'#1e2d4a',lineHeight:1 }}>{value}</div>
       <div style={{ fontSize:12,color:hov?'rgba(255,255,255,0.8)':'#8fa0bc',marginTop:6,fontWeight:600 }}>{label}</div>
     </div>
   );
@@ -37,6 +38,7 @@ function StatCard({ label, value, icon, g, shadow, delay }) {
 
 export default function Dashboard() {
   const { API, user } = useAuth();
+  const { dark } = useTheme();
   const [sum, setSum]   = useState(null);
   const [cgpa, setCgpa] = useState([]);
   const [load, setLoad] = useState(true);
@@ -50,8 +52,18 @@ export default function Dashboard() {
       .catch(console.error).finally(()=>setLoad(false));
   },[API]);
 
+  const appBg = dark ? '#0f172a' : '#f0f4ff';
+  const panelBg = dark ? '#111827' : '#fff';
+  const panelBorder = dark ? '#334155' : '#e2e8f8';
+  const textPrimary = dark ? '#e2e8f0' : '#1e2d4a';
+  const textSecondary = dark ? '#94a3b8' : '#64748b';
+  const textMuted = dark ? '#64748b' : '#94a3b8';
+  const cardStyle = { background:panelBg,border:`1px solid ${panelBorder}`,borderRadius:16,padding:'18px 20px',boxShadow:dark?'0 6px 22px rgba(0,0,0,0.22)':'0 2px 10px rgba(30,58,138,0.06)' };
+  const chartTitle = { fontFamily:"'Sora',sans-serif",color:textPrimary,fontSize:14,fontWeight:700 };
+  const chartSub = { color:textMuted,fontSize:11 };
+
   if(load) return (
-    <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',flexDirection:'column',gap:16,background:'#f0f4ff' }}>
+    <div style={{ display:'flex',alignItems:'center',justifyContent:'center',height:'100vh',flexDirection:'column',gap:16,background:appBg }}>
       <div style={{ width:48,height:48,border:'4px solid #bfdbfe',borderTop:'4px solid #2563eb',borderRadius:'50%',animation:'spin 0.8s linear infinite' }}/>
       <div style={{ color:'#2563eb',fontSize:14,fontWeight:600 }}>Loading Dashboard...</div>
     </div>
@@ -71,9 +83,8 @@ export default function Dashboard() {
   const hr = time.getHours();
   const greet = hr<12?'Good Morning ☀️':hr<17?'Good Afternoon 🌤️':'Good Evening 🌙';
   const scopeLabel = user?.role === 'admin' ? 'All Departments' : `${user?.department} Department`;
-
   return (
-    <div style={{ minHeight:'100vh',background:'#f0f4ff',fontFamily:"'Plus Jakarta Sans',sans-serif" }}>
+    <div style={{ minHeight:'100vh',background:appBg,fontFamily:"'Plus Jakarta Sans',sans-serif" }}>
 
       {/* ── Hero Banner ── */}
       <div style={{ position:'relative',height:190,overflow:'hidden' }}>
@@ -110,7 +121,7 @@ export default function Dashboard() {
       <div style={{ padding:'24px 28px 32px' }}>
         {/* Stats */}
         <div style={{ display:'grid',gridTemplateColumns:'repeat(6,1fr)',gap:14,marginBottom:22 }}>
-          {STATS.map(s=><StatCard key={s.key} {...s} value={sum?.[s.key]??0}/>)}
+          {STATS.map(s=><StatCard key={s.key} {...s} dark={dark} value={sum?.[s.key]??0}/>)}
         </div>
 
         {/* Charts + Campus gallery */}
@@ -121,10 +132,10 @@ export default function Dashboard() {
             <div style={chartHead}><span style={chartTitle}>📊 CGPA Distribution</span><span style={chartSub}>All students</span></div>
             <ResponsiveContainer width="100%" height={210}>
               <BarChart data={cgpa} margin={{top:5,right:5,bottom:5,left:-15}}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9"/>
-                <XAxis dataKey="label" tick={{fill:'#94a3b8',fontSize:10}}/>
-                <YAxis tick={{fill:'#94a3b8',fontSize:10}}/>
-                <Tooltip contentStyle={{background:'#fff',border:'1px solid #e2e8f8',borderRadius:8,fontSize:12,boxShadow:'0 4px 15px rgba(0,0,0,0.1)'}} cursor={{fill:'rgba(37,99,235,0.05)'}}/>
+                <CartesianGrid strokeDasharray="3 3" stroke={dark ? '#1f2937' : '#f1f5f9'}/>
+                <XAxis dataKey="label" tick={{fill:textMuted,fontSize:10}}/>
+                <YAxis tick={{fill:textMuted,fontSize:10}}/>
+                <Tooltip contentStyle={{background:panelBg,color:textPrimary,border:`1px solid ${panelBorder}`,borderRadius:8,fontSize:12,boxShadow:'0 4px 15px rgba(0,0,0,0.1)'}} cursor={{fill:'rgba(37,99,235,0.05)'}}/>
                 <Bar dataKey="count" radius={[6,6,0,0]}>
                   {cgpa.map((_,i)=><Cell key={i} fill={BAR_COLORS[i%BAR_COLORS.length]}/>)}
                 </Bar>
@@ -141,8 +152,8 @@ export default function Dashboard() {
                   label={({name,percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false}>
                   {pieData.map((_,i)=><Cell key={i} fill={PIE_COLORS[i]}/>)}
                 </Pie>
-                <Legend iconType="circle" iconSize={8} wrapperStyle={{fontSize:11}}/>
-                <Tooltip contentStyle={{background:'#fff',border:'1px solid #e2e8f8',borderRadius:8,fontSize:12}}/>
+                <Legend iconType="circle" iconSize={8} wrapperStyle={{fontSize:11,color:textSecondary}}/>
+                <Tooltip contentStyle={{background:panelBg,color:textPrimary,border:`1px solid ${panelBorder}`,borderRadius:8,fontSize:12}}/>
               </PieChart>
             </ResponsiveContainer>
           </div>
@@ -153,7 +164,7 @@ export default function Dashboard() {
             <div style={{ display:'flex',gap:6,marginBottom:10 }}>
               {Object.entries(BLOCKS).map(([k,v])=>(
                 <button key={k} onMouseEnter={()=>setBlock(k)}
-                  style={{ flex:1,padding:'6px 0',borderRadius:8,border:`1.5px solid ${block===k?'#2563eb':'#e2e8f8'}`,background:block===k?'linear-gradient(135deg,#eff6ff,#f5f3ff)':'#f8faff',color:block===k?'#2563eb':'#94a3b8',fontSize:11,fontWeight:700,cursor:'pointer',transition:'all 0.2s' }}>
+                  style={{ flex:1,padding:'6px 0',borderRadius:8,border:`1.5px solid ${block===k?'#2563eb':panelBorder}`,background:block===k?(dark?'linear-gradient(135deg,#1d4ed8,#312e81)':'linear-gradient(135deg,#eff6ff,#f5f3ff)'):(dark?'#1f2937':'#f8faff'),color:block===k?'#fff':textMuted,fontSize:11,fontWeight:700,cursor:'pointer',transition:'all 0.2s' }}>
                   {v.label}
                 </button>
               ))}
@@ -173,9 +184,9 @@ export default function Dashboard() {
         </div>
 
         {/* Quick stats row */}
-        <div style={{ marginTop:18,background:'#fff',borderRadius:16,padding:'18px 24px',border:'1px solid #e2e8f8',boxShadow:'0 2px 10px rgba(30,58,138,0.06)' }}>
+        <div style={{ marginTop:18,background:panelBg,borderRadius:16,padding:'18px 24px',border:`1px solid ${panelBorder}`,boxShadow:dark?'0 6px 22px rgba(0,0,0,0.22)':'0 2px 10px rgba(30,58,138,0.06)' }}>
           <div style={{ display:'flex',alignItems:'center',justifyContent:'space-between',flexWrap:'wrap',gap:16 }}>
-            <div style={{ color:'#64748b',fontSize:13,fontWeight:600 }}>📌 Quick Insights</div>
+            <div style={{ color:textSecondary,fontSize:13,fontWeight:600 }}>📌 Quick Insights</div>
             {[
               { label:'No Backlogs', value: sum?.total ? `${(((sum.total-sum.withBacklogs)/sum.total)*100).toFixed(1)}%` : '—', color:'#10b981' },
               { label:'Attendance OK', value: sum?.total ? `${(((sum.total-sum.lowAttendance)/sum.total)*100).toFixed(1)}%` : '—', color:'#2563eb' },
@@ -184,7 +195,7 @@ export default function Dashboard() {
             ].map(q=>(
               <div key={q.label} style={{ display:'flex',alignItems:'center',gap:8 }}>
                 <div style={{ width:10,height:10,borderRadius:'50%',background:q.color }}/>
-                <span style={{ color:'#94a3b8',fontSize:12 }}>{q.label}:</span>
+                <span style={{ color:textMuted,fontSize:12 }}>{q.label}:</span>
                 <span style={{ color:q.color,fontWeight:700,fontSize:14 }}>{q.value}</span>
               </div>
             ))}
@@ -192,7 +203,7 @@ export default function Dashboard() {
         </div>
 
         {/* Chairman message card */}
-        <div style={{ marginTop:18,background:'#fff',borderRadius:16,border:'1px solid #e2e8f8',overflow:'hidden',boxShadow:'0 2px 10px rgba(30,58,138,0.06)',display:'flex' }}>
+        <div style={{ marginTop:18,background:panelBg,borderRadius:16,border:`1px solid ${panelBorder}`,overflow:'hidden',boxShadow:dark?'0 6px 22px rgba(0,0,0,0.22)':'0 2px 10px rgba(30,58,138,0.06)',display:'flex' }}>
           {/* Chairman photo */}
           <div style={{ width:200,flexShrink:0,position:'relative',overflow:'hidden' }}>
             <img src="/campus/chairman.jpg" alt="Chairman"
@@ -209,15 +220,15 @@ export default function Dashboard() {
               <div style={{ width:4,height:36,background:'linear-gradient(180deg,#f97316,#f59e0b)',borderRadius:4 }}/>
               <div>
                 <div style={{ color:'#f97316',fontSize:10,fontWeight:800,textTransform:'uppercase',letterSpacing:'1px' }}>Chairman's Message</div>
-                <div style={{ fontFamily:"'Sora',sans-serif",color:'#1e2d4a',fontSize:18,fontWeight:800 }}>Shri Lavu Rathaiah </div>
+                <div style={{ fontFamily:"'Sora',sans-serif",color:textPrimary,fontSize:18,fontWeight:800 }}>Shri Lavu Rathaiah </div>
               </div>
             </div>
-            <p style={{ color:'#64748b',fontSize:13,lineHeight:1.7,margin:0 }}>
+            <p style={{ color:textSecondary,fontSize:13,lineHeight:1.7,margin:0 }}>
               "Education is the most powerful weapon which you can use to change the world. At Vignan's, we strive to provide world-class education and create engineers who make a difference."
             </p>
             <div style={{ marginTop:12,display:'flex',gap:8,flexWrap:'wrap' }}>
               {['NAAC A+','NBA Accredited','NIRF Ranked','Autonomous University'].map(b=>(
-                <span key={b} style={{ background:'#f0f4ff',border:'1px solid #c7d2fe',color:'#4f46e5',fontSize:10,padding:'3px 10px',borderRadius:20,fontWeight:700 }}>{b}</span>
+                <span key={b} style={{ background:dark?'#1f2937':'#f0f4ff',border:`1px solid ${dark?'#334155':'#c7d2fe'}`,color:dark?'#c4b5fd':'#4f46e5',fontSize:10,padding:'3px 10px',borderRadius:20,fontWeight:700 }}>{b}</span>
               ))}
             </div>
           </div>
@@ -226,8 +237,4 @@ export default function Dashboard() {
     </div>
   );
 }
-
-const cardStyle = { background:'#fff',border:'1px solid #e2e8f8',borderRadius:16,padding:'18px 20px',boxShadow:'0 2px 10px rgba(30,58,138,0.06)' };
 const chartHead  = { display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12 };
-const chartTitle = { fontFamily:"'Sora',sans-serif",color:'#1e2d4a',fontSize:14,fontWeight:700 };
-const chartSub   = { color:'#94a3b8',fontSize:11 };

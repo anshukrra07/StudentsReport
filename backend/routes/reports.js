@@ -2,6 +2,27 @@ const router = require('express').Router();
 const Student = require('../models/Student');
 const { authenticate } = require('../middleware/auth');
 const { buildScopedReportRows } = require('../lib/reportExports');
+const { logAudit } = require('../lib/auditLogger');
+const { isBatchAcademicYearCompatible, buildImpossibleFilter } = require('../lib/filterCompatibility');
+const { validateReportFilters } = require('../lib/validate');
+const { cacheMiddleware } = require('../middleware/cache');
+
+// ─── Centralised async error wrapper ────────────────────────────────────────
+// Wraps every route handler so unhandled promise rejections return a structured
+// JSON error instead of a silent 500 or hanging request.
+const wrap = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// ─── Global error handler (register last in server.js too) ──────────────────
+// Placed here so route-level errors in THIS file are caught consistently.
+function routeErrorHandler(err, req, res, _next) {
+  const status = err.status || 500;
+  const isDev  = process.env.NODE_ENV !== 'production';
+  res.status(status).json({
+    error:   status === 500 ? 'SERVER_ERROR' : 'REQUEST_ERROR',
+    message: isDev ? err.message : 'Something went wrong. Please try again.',
+    ...(isDev && { stack: err.stack }),
+  });
+}
 
 router.use(authenticate);
 
@@ -18,6 +39,9 @@ function buildFilter(user, query, skipSemester = false) {
   if (dept) f.department = dept;
   if (batch) f.batch = batch;
   if (section) f.section = section;
+  if (!isBatchAcademicYearCompatible(batch, query.academicYear)) {
+    return buildImpossibleFilter(f);
+  }
   // Only filter by currentSemester when explicitly needed (not for attendance/marks which filter internally)
   if (!skipSemester && semester) f.currentSemester = parseInt(semester);
   return f;
@@ -83,8 +107,8 @@ function getScopedPendingCredits(student, query = {}) {
 }
 
 // ─── ATTENDANCE ────────────────────────────────────────────────────────
-router.get('/attendance', async (req, res) => {
-  try {
+router.get('/attendance', validateReportFilters('attendance'), cacheMiddleware(90), wrap(async (req, res) => {
+  {
     const { type, threshold = 75, semester, academicYear } = req.query;
     // Use skipSemester=true — attendance records have their own semester field
     const students = await Student.find(buildFilter(req.user, req.query, true));
@@ -173,12 +197,12 @@ router.get('/attendance', async (req, res) => {
     }
 
     res.json({ type, count: result.length, threshold, data: result });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 // ─── MARKS ─────────────────────────────────────────────────────────────
-router.get('/marks', async (req, res) => {
-  try {
+router.get('/marks', validateReportFilters('marks'), cacheMiddleware(90), wrap(async (req, res) => {
+  {
     const { type } = req.query;
     const students = await Student.find(buildFilter(req.user, req.query, true));
     let result = [];
@@ -236,12 +260,12 @@ router.get('/marks', async (req, res) => {
       }).filter(Boolean);
     }
     res.json({ type, count: result.length, data: result });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
-// ─── BACKLOGS (enhanced with repeated subjects + pending credits) ───────
-router.get('/backlogs', async (req, res) => {
-  try {
+// ─── BACKLOGS ──────────────────────────────────────────────────────────
+router.get('/backlogs', validateReportFilters('backlogs'), cacheMiddleware(90), wrap(async (req, res) => {
+  {
     const { subtype } = req.query;
     const students = await Student.find(buildFilter(req.user, req.query, true));
 
@@ -290,12 +314,12 @@ router.get('/backlogs', async (req, res) => {
 
     result.sort((a, b) => b.backlogCount - a.backlogCount);
     res.json({ count: result.length, data: result });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 // ─── CGPA ──────────────────────────────────────────────────────────────
-router.get('/cgpa', async (req, res) => {
-  try {
+router.get('/cgpa', validateReportFilters('cgpa'), cacheMiddleware(120), wrap(async (req, res) => {
+  {
     const { type } = req.query;
     const students = await Student.find(buildFilter(req.user, req.query, true));
     const rankedStudents = students
@@ -333,12 +357,12 @@ router.get('/cgpa', async (req, res) => {
       rank: i + 1, rollNumber: student.rollNumber, name: student.name,
       department: student.department, section: student.section, batch: student.batch, cgpa: score
     }))});
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 // ─── ACADEMIC RISK ─────────────────────────────────────────────────────
-router.get('/risk', async (req, res) => {
-  try {
+router.get('/risk', validateReportFilters('risk'), cacheMiddleware(90), wrap(async (req, res) => {
+  {
     const { riskType } = req.query;
     const students = await Student.find(buildFilter(req.user, req.query, true));
 
@@ -366,12 +390,12 @@ router.get('/risk', async (req, res) => {
 
     atRisk.sort((a, b) => b.riskScore - a.riskScore);
     res.json({ count: atRisk.length, data: atRisk });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 // ─── TOP PERFORMERS ────────────────────────────────────────────────────
-router.get('/top-performers', async (req, res) => {
-  try {
+router.get('/top-performers', validateReportFilters('toppers'), cacheMiddleware(120), wrap(async (req, res) => {
+  {
     const limit = parseInt(req.query.limit) || 10;
     const students = await Student.find(buildFilter(req.user, req.query, true));
     const rankedStudents = students
@@ -384,12 +408,12 @@ router.get('/top-performers', async (req, res) => {
       department: student.department, batch: student.batch, section: student.section,
       cgpa: score, backlogs: getScopedBacklogCodes(student, req.query).length, currentSemester: student.currentSemester
     }))});
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 // ─── DASHBOARD SUMMARY ─────────────────────────────────────────────────
-router.get('/summary', async (req, res) => {
-  try {
+router.get('/summary', cacheMiddleware(60), wrap(async (req, res) => {
+  {
     let students = await Student.find(buildFilter(req.user, req.query, true));
     if (hasScopedFilter(req.query)) {
       students = students.filter(s => getScopedSemesters(s, req.query).length || getScopedAttendance(s, req.query).length);
@@ -412,8 +436,8 @@ router.get('/summary', async (req, res) => {
       return has;
     }).length;
     res.json({ total, avgCGPA, withBacklogs, lowAttendance, atRisk, toppers, repeatedSubj });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 // ─── SCHEDULE REPORT (MongoDB-backed persistence) ──────────────────────────
 const mongoose = require('mongoose');
@@ -433,8 +457,8 @@ const scheduleSchema = new mongoose.Schema({
 }, { timestamps: true });
 const Schedule = mongoose.models.Schedule || mongoose.model('Schedule', scheduleSchema);
 
-router.post('/schedule', async (req, res) => {
-  try {
+router.post('/schedule', wrap(async (req, res) => {
+  {
     const { reportType, filters, frequency, email, label } = req.body;
     if (!reportType || !frequency) return res.status(400).json({ message: 'reportType and frequency required' });
     const entry = await Schedule.create({
@@ -444,25 +468,62 @@ router.post('/schedule', async (req, res) => {
       department: req.user.department,
       nextRun: getNextRun(frequency),
     });
+    await logAudit({
+      req,
+      user: req.user,
+      action: 'schedule.create',
+      entityType: 'schedule',
+      entityId: entry._id,
+      message: `Created schedule "${label || `${reportType} report`}".`,
+      metadata: { reportType, frequency, email, filters: filters || {} },
+    });
     res.json({ message: 'Schedule saved', schedule: { ...entry.toObject(), id: entry._id } });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
-router.get('/schedules', async (req, res) => {
-  try {
+router.get('/schedules', wrap(async (req, res) => {
+  {
     const filter = req.user.role === 'admin' ? {} : { department: req.user.department };
     const schedules = await Schedule.find(filter).sort({ createdAt: -1 });
     res.json(schedules.map(s => ({ ...s.toObject(), id: s._id })));
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
-router.delete('/schedule/:id', async (req, res) => {
-  try {
-    const deleted = await Schedule.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ message: 'Not found' });
+router.delete('/schedule/:id', wrap(async (req, res) => {
+  {
+    const schedule = await Schedule.findById(req.params.id);
+    if (!schedule) return res.status(404).json({ message: 'Not found' });
+    const isOwner = schedule.createdBy === req.user.username;
+    const isSameDepartment = schedule.department === req.user.department;
+    const canDelete = req.user.role === 'admin' || isOwner || isSameDepartment;
+
+    if (!canDelete) {
+      await logAudit({
+        req,
+        user: req.user,
+        action: 'schedule.delete',
+        status: 'failure',
+        entityType: 'schedule',
+        entityId: req.params.id,
+        message: 'Schedule delete denied due to insufficient permissions.',
+        metadata: { scheduleDepartment: schedule.department, scheduleCreatedBy: schedule.createdBy },
+      });
+      return res.status(403).json({ message: 'Not allowed to delete this schedule' });
+    }
+
+    await Schedule.findByIdAndDelete(req.params.id);
+    await logAudit({
+      req,
+      user: req.user,
+      action: 'schedule.delete',
+      entityType: 'schedule',
+      entityId: req.params.id,
+      message: `Deleted schedule "${schedule.label || schedule.reportType}".`,
+      metadata: { reportType: schedule.reportType, frequency: schedule.frequency, email: schedule.email },
+    });
     res.json({ message: 'Deleted' });
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
 
 function getNextRun(freq) {
   const d = new Date();
@@ -473,14 +534,23 @@ function getNextRun(freq) {
 }
 
 // ─── PDF EXPORT ────────────────────────────────────────────────────────
-router.get('/export-pdf', async (req, res) => {
-  try {
+router.get('/export-pdf', wrap(async (req, res) => {
+  {
     const { reportType, title } = req.query;
     let students = await Student.find(buildFilter(req.user, req.query, true)).limit(200);
     if (hasScopedFilter(req.query)) {
       students = students.filter(s => getScopedSemesters(s, req.query).length || getScopedAttendance(s, req.query).length);
     }
     const rows = buildScopedReportRows(reportType, students, req.query).slice(0, 200);
+    await logAudit({
+      req,
+      user: req.user,
+      action: 'report.export_pdf',
+      entityType: 'report',
+      entityId: reportType || '',
+      message: `Exported ${reportType || 'unknown'} report as PDF.`,
+      metadata: { reportType, title: title || '', rowCount: rows.length, filters: { ...req.query } },
+    });
 
     const PDFDocument = require('pdfkit');
     const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
@@ -545,7 +615,10 @@ router.get('/export-pdf', async (req, res) => {
     });
 
     doc.end();
-  } catch (err) { res.status(500).json({ message: err.message }); }
-});
+  }
+}));
+
+// ─── Route-level error handler ────────────────────────────────────────────
+router.use(routeErrorHandler);
 
 module.exports = router;

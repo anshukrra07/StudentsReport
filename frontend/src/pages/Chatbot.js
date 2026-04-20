@@ -84,48 +84,179 @@ const STATIC_PROMPTS = new Set([
   ...QUICK_PICKS.map(q => q.query),
 ]);
 
-// ── NLP Parser ────────────────────────────────────────────────────────────
-function parseMsg(msg) {
-  const l = msg.toLowerCase();
-  let rt = null, p = {};
-  if(l.includes('attendance')){
-    rt='attendance';
-    if(l.includes('low')||l.includes('shortage')||l.includes('below')) p.type='low_attendance';
-    else if(l.includes('subject')) p.type='subject_wise';
-    else if(l.includes('department')||l.includes('dept')) p.type='department_wise';
-    else p.type='section_wise';
-  }
-  else if(l.includes('internal marks')||l.includes('internal report')) { rt='marks'; p.type='internal'; }
-  else if(l.includes('external marks')||l.includes('external report')) { rt='marks'; p.type='external'; }
-  else if(l.includes('semester result')||l.includes('result summar'))  { rt='marks'; p.type='semester_summary'; }
-  else if(l.includes('subject performance'))                            { rt='marks'; p.type='subject_performance'; }
-  else if(l.includes('marks')||l.includes('result'))                   { rt='marks'; p.type='external'; }
-  else if(l.includes('repeated subject'))  { rt='backlogs'; p.backlogType='repeated'; }
-  else if(l.includes('pending')||l.includes('course completion')) { rt='backlogs'; p.backlogType='pending'; }
-  else if(l.includes('backlog')||l.includes('arrear')) { rt='backlogs'; }
-  else if(l.includes('cgpa distribution')) { rt='cgpa'; p.type='distribution'; }
-  else if(l.includes('ranking')||l.includes('rank list')) { rt='cgpa'; p.type='ranking'; }
-  else if(l.includes('topper')||l.includes('academic topper')) { rt='cgpa'; p.type='toppers'; }
-  else if(l.includes('cgpa')) { rt='cgpa'; p.type='ranking'; }
-  else if(l.includes('low cgpa risk'))       { rt='risk'; p.riskType='low_cgpa'; }
-  else if(l.includes('multiple backlog'))    { rt='risk'; p.riskType='backlogs'; }
-  else if(l.includes('low attendance risk')) { rt='risk'; p.riskType='low_attendance'; }
-  else if(l.includes('risk')||l.includes('at-risk')||l.includes('at risk')) { rt='risk'; }
-  else if(l.includes('top performer')||l.includes('best student')) { rt='toppers'; }
-  ['CSE','ECE','MECH','CIVIL','EEE'].forEach(d=>{ if(l.includes(d.toLowerCase())) p.department=d; });
-  const sec=l.match(/section\s+([abc])/i); if(sec) p.section=sec[1].toUpperCase();
-  const sem=l.match(/sem(?:ester)?\s*(\d)/i); if(sem) p.semester=sem[1];
-  const bat=l.match(/batch\s+(20\d{2}[-–]20\d{2})/i)||l.match(/(20\d{2}[-–]20\d{2})/); if(bat) p.batch=bat[1].replace('–','-');
-  // Academic year: "academic year 2023-24", "2023-24", "ay 2023-2024", "year 2024-25"
-  const ayFull=l.match(/(?:academic\s*year|ay|for)\s*(20\d{2}[-–]20\d{2})/i);
-  const ayShort=l.match(/(?:academic\s*year|ay|for)\s*(20\d{2})[-–](\d{2})/i);
-  if(ayFull) p.academicYear=ayFull[1].replace('–','-');
-  else if(ayShort) p.academicYear=`${ayShort[1]}-20${ayShort[2]}`;
-  const thr=l.match(/below\s+(\d+)/i)||l.match(/(\d+)\s*%/); if(thr&&rt==='attendance') p.threshold=thr[1];
-  const lim=l.match(/top\s+(\d+)/i); if(lim) p.limit=lim[1];
-  return {rt,p};
+const WORD_NUMBERS = {
+  one:1, two:2, three:3, four:4, five:5, six:6, seven:7, eight:8, nine:9, ten:10,
+  first:1, second:2, third:3, fourth:4, fifth:5, sixth:6, seventh:7, eighth:8,
+};
+
+const DEPARTMENT_ALIASES = {
+  CSE: ['cse', 'computer science', 'computer science engineering'],
+  ECE: ['ece', 'electronics', 'electronics and communication'],
+  EEE: ['eee', 'electrical', 'electrical and electronics'],
+  MECH: ['mech', 'mechanical'],
+  CIVIL: ['civil'],
+};
+
+const FOLLOW_UP_RE = /^(same|same report|same thing|now|now show|now only|only|just|also|and|then|what about|how about|for|with|without|filter|change|switch|update|make it|show only|same for)\b/i;
+
+function normalizeYearRange(start, end) {
+  if (!start || !end) return '';
+  const normalizedEnd = String(end).length === 2 ? `${String(start).slice(0, 2)}${end}` : end;
+  return `${start}-${normalizedEnd}`;
 }
-function getEndpoint(rt, p) {
+
+function extractDepartment(text) {
+  for (const [department, aliases] of Object.entries(DEPARTMENT_ALIASES)) {
+    if (aliases.some(alias => text.includes(alias))) return department;
+  }
+  return '';
+}
+
+function extractSection(message) {
+  const match = message.match(/\b(?:section|sec)\s*([abc])\b/i) || message.match(/\b([abc])\s*section\b/i);
+  return match ? match[1].toUpperCase() : '';
+}
+
+function extractSemester(message) {
+  const direct = message.match(/\b(?:sem|semester)\s*(\d)\b/i)
+    || message.match(/\b(\d)(?:st|nd|rd|th)?\s*(?:sem|semester)\b/i);
+  if (direct) return direct[1];
+
+  const lower = message.toLowerCase();
+  for (const [word, number] of Object.entries(WORD_NUMBERS)) {
+    if (lower.includes(`${word} semester`) || lower.includes(`semester ${word}`) || lower.includes(`${word} sem`)) {
+      return String(number);
+    }
+  }
+  return '';
+}
+
+function extractBatch(message) {
+  const full = message.match(/\b(20\d{2})\s*[-–/to]+\s*(20\d{2})\b/i);
+  if (full) return normalizeYearRange(full[1], full[2]);
+  return '';
+}
+
+function extractAcademicYear(message) {
+  const full = message.match(/\b(?:academic\s*year|ay|year)\s*(20\d{2})\s*[-–/to]+\s*(20\d{2}|\d{2})\b/i);
+  if (full) return normalizeYearRange(full[1], full[2]);
+
+  const short = message.match(/\b(?:academic\s*year|ay|year)\s*(20\d{2})\s*[-–/](\d{2})\b/i);
+  if (short) return normalizeYearRange(short[1], short[2]);
+
+  return '';
+}
+
+function extractThreshold(message) {
+  const match = message.match(/\b(?:below|under|less than|lt)\s*(\d{2,3})\s*%?\b/i)
+    || message.match(/\b(\d{2,3})\s*%\b/);
+  return match ? match[1] : '';
+}
+
+function extractLimit(message) {
+  const direct = message.match(/\b(?:top|best|highest)\s*(\d+)\b/i);
+  if (direct) return direct[1];
+
+  const lower = message.toLowerCase();
+  for (const [word, number] of Object.entries(WORD_NUMBERS)) {
+    if (lower.includes(`top ${word}`) || lower.includes(`best ${word}`)) return String(number);
+  }
+  return '';
+}
+
+function parseMsg(msg) {
+  const l = msg.toLowerCase().trim();
+  let rt = null;
+  const p = {};
+
+  p.department = extractDepartment(l);
+  p.section = extractSection(msg);
+  p.semester = extractSemester(msg);
+  p.batch = extractBatch(msg);
+  p.academicYear = extractAcademicYear(msg);
+
+  if (l.includes('attendance') || l.includes('detain') || l.includes('shortage') || l.includes('absent')) {
+    rt = 'attendance';
+    if (/(low|shortage|below|under|less than|detain)/i.test(msg)) p.type = 'low_attendance';
+    else if (/(subject|course)/i.test(msg)) p.type = 'subject_wise';
+    else if (/(department|dept|compare)/i.test(msg)) p.type = 'department_wise';
+    else p.type = 'section_wise';
+  } else if (/(internal marks|mid marks|mid exam|internal report)/i.test(msg)) {
+    rt = 'marks'; p.type = 'internal';
+  } else if (/(external marks|end exam|end semester|external report)/i.test(msg)) {
+    rt = 'marks'; p.type = 'external';
+  } else if (/(semester result|result summary|pass percentage|fail percentage)/i.test(msg)) {
+    rt = 'marks'; p.type = 'semester_summary';
+  } else if (/(subject performance|subject analysis|performance by subject)/i.test(msg)) {
+    rt = 'marks'; p.type = 'subject_performance';
+  } else if (/\b(marks|results?|scores?|grades?)\b/i.test(msg)) {
+    rt = 'marks'; p.type = 'external';
+  } else if (/(repeated subject|repeat subject)/i.test(msg)) {
+    rt = 'backlogs'; p.backlogType = 'repeated';
+  } else if (/(pending credits?|pending course|course completion)/i.test(msg)) {
+    rt = 'backlogs'; p.backlogType = 'pending';
+  } else if (/\b(backlogs?|arrears?|failed subjects?)\b/i.test(msg)) {
+    rt = 'backlogs';
+  } else if (/(cgpa distribution|distribution of cgpa|grade distribution)/i.test(msg)) {
+    rt = 'cgpa'; p.type = 'distribution';
+  } else if (/(rank(ing| list)?|cgpa list|student list|full list|all students)/i.test(msg)) {
+    rt = 'cgpa'; p.type = 'ranking';
+  } else if (/(toppers?|academic toppers?|highest cgpa)/i.test(msg)) {
+    rt = 'cgpa'; p.type = 'toppers';
+  } else if (/\bcgpa\b/i.test(msg)) {
+    rt = 'cgpa'; p.type = 'ranking';
+  } else if (/(low cgpa risk|cgpa risk)/i.test(msg)) {
+    rt = 'risk'; p.riskType = 'low_cgpa';
+  } else if (/(multiple backlogs?|backlog risk)/i.test(msg)) {
+    rt = 'risk'; p.riskType = 'backlogs';
+  } else if (/(low attendance risk|attendance risk)/i.test(msg)) {
+    rt = 'risk'; p.riskType = 'low_attendance';
+  } else if (/(at-risk|at risk|risk|struggling|weak students)/i.test(msg)) {
+    rt = 'risk';
+  } else if (/(top performers?|best students?|highest performers?)/i.test(msg)) {
+    rt = 'toppers';
+  }
+
+  const threshold = extractThreshold(msg);
+  if (threshold && (rt === 'attendance' || /attendance/i.test(msg))) p.threshold = threshold;
+
+  const limit = extractLimit(msg);
+  if (limit) p.limit = limit;
+
+  return { rt, p };
+}
+
+function isFollowUpMessage(msg, parsed) {
+  if (parsed.rt) return false;
+  if (FOLLOW_UP_RE.test(msg.trim())) return true;
+  return Object.keys(parsed.p || {}).some(key => parsed.p[key]);
+}
+
+function mergeQueryContext(previous, next) {
+  return {
+    rt: next.rt || previous.rt,
+    p: {
+      ...(previous.p || {}),
+      ...(next.p || {}),
+      ...(next.p?.backlogType ? { backlogType: next.p.backlogType } : {}),
+      ...(next.p?.riskType ? { riskType: next.p.riskType } : {}),
+      ...(next.p?.type ? { type: next.p.type } : {}),
+    },
+    intent: previous.intent || '',
+  };
+}
+
+function buildAiContextMessage(msg, context) {
+  if (!context?.rt) return msg;
+  return [
+    'Previous successful report context:',
+    JSON.stringify({ report: context.rt, ...context.p, intent: context.intent || '' }),
+    `User follow-up: ${msg}`,
+    'If the user is refining the previous request, preserve the same report and merge only the new filters.',
+  ].join('\n');
+}
+
+function buildEndpoint(rt, p) {
   const map = {
     attendance:`/reports/attendance?type=${p.type||'section_wise'}`,
     marks:`/reports/marks?type=${p.type||'external'}`,
@@ -137,9 +268,23 @@ function getEndpoint(rt, p) {
   return map[rt]||`/reports/${rt}?`;
 }
 
-// ── Mini result table ─────────────────────────────────────────────────────
+function buildEndpointWithParams(rt, p = {}) {
+  const qp = new URLSearchParams();
+  const skip = ['type', 'riskType', 'backlogType', 'limit'];
+  Object.entries(p).forEach(([key, value]) => {
+    if (!skip.includes(key) && value) qp.append(key, value);
+  });
+  if (p.riskType) qp.append('riskType', p.riskType);
+  if (p.backlogType) qp.append('subtype', p.backlogType);
+  if (p.limit) qp.append('limit', p.limit);
+  return `${buildEndpoint(rt, p)}&${qp}`;
+}
+
+// ── Mini result table — with pagination ──────────────────────────────────
+const PAGE_SIZE = 15;
 function MiniTable({data,type,subType}) {
   const [hov,setHov]=useState(null);
+  const [page,setPage]=useState(0);
   if(!data||!data.length) return <p style={{color:'#94a3b8',fontSize:12,marginTop:8}}>No records found.</p>;
   const autoKeys=Object.keys(data[0]).filter(k=>!['students','semesters','attendance','lowSubjects','failedSubjects','repeatedSubjects'].includes(k)).slice(0,7);
   const COLS={
@@ -165,6 +310,8 @@ function MiniTable({data,type,subType}) {
     if(col==='riskScore') return '#f97316';
     return '#374151';
   };
+  const totalPages = Math.ceil(data.length / PAGE_SIZE);
+  const visible = data.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
   return (
     <div style={{overflowX:'auto',borderRadius:10,border:`1px solid ${tm.color}25`,marginTop:12,background:'#fff'}}>
       <table style={{width:'100%',borderCollapse:'collapse',fontSize:11}}>
@@ -178,8 +325,8 @@ function MiniTable({data,type,subType}) {
           </tr>
         </thead>
         <tbody>
-          {data.slice(0,15).map((r,i)=>(
-            <tr key={i}
+          {visible.map((r,i)=>(
+            <tr key={page*PAGE_SIZE+i}
               style={{background:hov===i?tm.bg:'#fff',transition:'background 0.15s',borderLeft:`2px solid ${hov===i?tm.color:'transparent'}`}}
               onMouseEnter={()=>setHov(i)} onMouseLeave={()=>setHov(null)}>
               {cols.map(c=>{
@@ -195,7 +342,27 @@ function MiniTable({data,type,subType}) {
           ))}
         </tbody>
       </table>
-      {data.length>15&&<div style={{color:'#94a3b8',fontSize:10,padding:'7px 12px',borderTop:`1px solid ${tm.color}15`,background:'#fafbff'}}>Showing 15 of {data.length} — export for full data</div>}
+      {/* Pagination footer */}
+      {data.length > PAGE_SIZE && (
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'7px 12px',borderTop:`1px solid ${tm.color}15`,background:'#fafbff',gap:8}}>
+          <span style={{color:'#94a3b8',fontSize:10}}>
+            Showing {page*PAGE_SIZE+1}–{Math.min((page+1)*PAGE_SIZE,data.length)} of {data.length}
+          </span>
+          <div style={{display:'flex',gap:5,alignItems:'center'}}>
+            <button
+              disabled={page===0}
+              onClick={()=>setPage(p=>p-1)}
+              style={{background:page===0?'#f1f5f9':'#fff',border:`1px solid ${page===0?'#e2e8f8':tm.color+'40'}`,color:page===0?'#cbd5e1':tm.color,borderRadius:6,padding:'3px 9px',fontSize:11,fontWeight:700,cursor:page===0?'default':'pointer'}}
+            >← Prev</button>
+            <span style={{color:'#64748b',fontSize:10,fontWeight:600}}>{page+1}/{totalPages}</span>
+            <button
+              disabled={page===totalPages-1}
+              onClick={()=>setPage(p=>p+1)}
+              style={{background:page===totalPages-1?'#f1f5f9':'#fff',border:`1px solid ${page===totalPages-1?'#e2e8f8':tm.color+'40'}`,color:page===totalPages-1?'#cbd5e1':tm.color,borderRadius:6,padding:'3px 9px',fontSize:11,fontWeight:700,cursor:page===totalPages-1?'default':'pointer'}}
+            >Next →</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -224,29 +391,43 @@ function VoiceWaveform({isListening}) {
 }
 
 // ── Main Chatbot component ────────────────────────────────────────────────
+const INITIAL_MSG = {
+  role:'bot', type:null, subType:'',
+  text:'👋 Namaste! I am the VFSTR Report Assistant.\n\nYou can type OR 🎤 speak your query!\n\nI understand:\n📋 Attendance — section, subject, dept, low\n📊 Marks — internal, external, results, performance\n⚠️  Backlogs — list, repeated, pending\n⭐ CGPA — distribution, rankings, toppers\n⚡ Risk — low CGPA, backlogs, attendance\n🏆 Top Performers\n\nTry: "Show low attendance for CSE below 75%"',
+};
+
 export default function Chatbot() {
   const {API} = useAuth();
-  const [msgs, setMsgs] = useState([{
-    role:'bot', type:null, subType:'',
-    text:'👋 Namaste! I am the VFSTR Report Assistant.\n\nYou can type OR 🎤 speak your query!\n\nI understand:\n📋 Attendance — section, subject, dept, low\n📊 Marks — internal, external, results, performance\n⚠️  Backlogs — list, repeated, pending\n⭐ CGPA — distribution, rankings, toppers\n⚡ Risk — low CGPA, backlogs, attendance\n🏆 Top Performers\n\nTry: "Show low attendance for CSE below 75%"',
-    time:new Date()
-  }]);
+  const contextRef  = useRef(null);
+  const abortRef    = useRef(null);   // AbortController for in-flight requests
+  const [msgs, setMsgs] = useState([{...INITIAL_MSG, time:new Date()}]);
   const [inp, setInp]           = useState('');
   const [busy, setBusy]         = useState(false);
   const [hovS, setHovS]         = useState('');
   const [hovB, setHovB]         = useState('');
+  const [sugOpen, setSugOpen]   = useState(false); // collapsed suggestion strip
 
   // ── Voice recognition state ──
   const [isListening, setIsListening]         = useState(false);
   const [voiceSupported, setVoiceSupported]   = useState(false);
-  const [voiceStatus, setVoiceStatus]         = useState('');   // status text
-  const [transcript, setTranscript]           = useState('');   // live transcript
+  const [voiceStatus, setVoiceStatus]         = useState('');
+  const [transcript, setTranscript]           = useState('');
   const [voiceError, setVoiceError]           = useState('');
   const recognitionRef = useRef(null);
-  const voiceErrorRef  = useRef('');           // ref to track error state in closures
+  const voiceErrorRef  = useRef('');
   const endRef         = useRef();
 
   useEffect(()=>{ endRef.current?.scrollIntoView({behavior:'smooth'}); },[msgs]);
+
+  const clearChat = useCallback(() => {
+    // Cancel any in-flight request
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setBusy(false);
+    contextRef.current = null;
+    setMsgs([{...INITIAL_MSG, time:new Date()}]);
+    setInp('');
+  }, []);
 
   // Check browser voice support on mount
   useEffect(()=>{
@@ -327,21 +508,31 @@ export default function Chatbot() {
     }
   },[isListening, voiceSupported]);
 
-  const push = (role,text,data=null,type=null,subType='',intent='',quickPicks=null) =>
-    setMsgs(p=>[...p,{role,text,data,type,subType,intent,quickPicks,time:new Date()}]);
+  const push = (role,text,data=null,type=null,subType='',intent='',quickPicks=null,query='') =>
+    setMsgs(p=>[...p,{role,text,data,type,subType,intent,quickPicks,query,time:new Date()}]);
+
+  const cancelRequest = useCallback(() => {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setBusy(false);
+  }, []);
 
   // ── Smart send ────────────────────────────────────────────────────────
-  // Static prompt  → keyword parser (instant, no API call)
-  // Conversational → friendly reply (instant, no API call)
-  // Generic report → quick-pick buttons (instant, no API call)
-  // Everything else → Gemini AI (understands full natural language)
   const send = useCallback(async (msg=inp) => {
     if(!msg.trim()) return;
+    if(busy) return;
     if(isListening){ recognitionRef.current?.stop(); setIsListening(false); }
     setInp(''); setTranscript(''); setVoiceStatus('');
     push('user', msg); setBusy(true);
 
+    // Create a fresh AbortController for this request
+    const controller = new AbortController();
+    abortRef.current = controller;
+
     try {
+      const localParsed = parseMsg(msg);
+      const followUp = isFollowUpMessage(msg, localParsed);
+
       // ── Step 0: conversational messages ──────────────────────────────
       const conv = CONV_REPLIES.find(c => c.match.test(msg.trim()));
       if (conv) { push('bot', conv.reply); setBusy(false); return; }
@@ -354,26 +545,59 @@ export default function Chatbot() {
 
       let rt, p, endpoint, intent='', usedAI=false;
 
-      // ── Step 1: static prompt → keyword parser (instant, zero API) ───
-      if (STATIC_PROMPTS.has(msg.trim())) {
-        const kw = parseMsg(msg);
-        if (kw.rt) {
-          rt = kw.rt; p = kw.p;
-          const qp = new URLSearchParams();
-          const SKIP = ['type','riskType','backlogType','limit'];
-          Object.entries(p).forEach(([k,v])=>{ if(!SKIP.includes(k) && v) qp.append(k,v); });
-          if(p.riskType)    qp.append('riskType', p.riskType);
-          if(p.backlogType) qp.append('subtype',  p.backlogType);
-          if(p.limit)       qp.append('limit',    p.limit);
-          endpoint = `${getEndpoint(rt,p)}&${qp}`;
+      // ── Step 1: follow-up refinements using previous successful context ─
+      if (followUp && contextRef.current?.rt) {
+        const merged = mergeQueryContext(contextRef.current, localParsed);
+        if (merged.rt) {
+          rt = merged.rt;
+          p = merged.p;
+          endpoint = buildEndpointWithParams(rt, p);
+          intent = contextRef.current.intent || '';
+          usedAI = false;
         }
       }
 
-      // ── Step 2: everything else → Gemini AI ──────────────────────────
+      // ── Step 2: direct keyword parser for any recognizable report query ─
+      if (!rt && localParsed.rt) {
+        rt = localParsed.rt;
+        p = localParsed.p;
+        endpoint = buildEndpointWithParams(rt, p);
+        usedAI = false;
+      }
+
+      // ── Step 2.5: keep static prompts explicitly instant as well ───────
+      if (!rt && STATIC_PROMPTS.has(msg.trim())) {
+        if (localParsed.rt) {
+          rt = localParsed.rt;
+          p = localParsed.p;
+          endpoint = buildEndpointWithParams(rt, p);
+        }
+      }
+
+      // ── Step 3: everything else → Gemini AI ──────────────────────────
       if (!rt) {
         usedAI = true;
         try {
-          const aiRes = await axios.post(`${API}/ai/query`, { message: msg }, { timeout: 12000 });
+          // Build conversation history from recent bot/user exchanges (last 8 turns)
+          // Only include text-only messages (not report results) so context is concise
+          const recentHistory = msgs.slice(-16).reduce((acc, m) => {
+            if (m.role === 'user') {
+              acc.push({ role: 'user', text: m.text });
+            } else if (m.role === 'bot' && !m.data && m.text) {
+              // Only include conversational bot replies, not data tables
+              acc.push({ role: 'model', text: m.text.slice(0, 200) });
+            }
+            return acc;
+          }, []).slice(-8);
+
+          const aiRes = await axios.post(
+            `${API}/ai/query`,
+            {
+              message: buildAiContextMessage(msg, followUp ? contextRef.current : null),
+              conversationHistory: recentHistory,
+            },
+            { timeout: 12000, signal: controller.signal }
+          );
           const { parsed, endpoint: ep, intent: aiIntent } = aiRes.data;
           if (parsed?.report && ep) {
             rt = parsed.report; endpoint = ep; intent = aiIntent || '';
@@ -383,24 +607,28 @@ export default function Chatbot() {
               ...(parsed.section      && { section:      parsed.section      }),
               ...(parsed.semester     && { semester:     parsed.semester     }),
               ...(parsed.academicYear && { academicYear: parsed.academicYear }),
+              ...(parsed.type         && { type:         parsed.type         }),
               ...(parsed.threshold    && { threshold:    parsed.threshold    }),
               ...(parsed.limit        && { limit:        parsed.limit        }),
             };
+            if (parsed.report === 'risk' && parsed.type) p.riskType = parsed.type;
+            if (parsed.report === 'backlogs' && parsed.type) p.backlogType = parsed.type;
           }
         } catch (_) { /* AI unavailable — fall through */ }
 
-        // ── Step 3: AI also failed → keyword parser as last resort ─────
+        // ── Step 4: AI also failed → keyword parser / context fallback ──
         if (!rt) {
-          const kw = parseMsg(msg);
-          if (kw.rt) {
-            rt = kw.rt; p = kw.p; usedAI = false;
-            const qp = new URLSearchParams();
-            const SKIP = ['type','riskType','backlogType','limit'];
-            Object.entries(p).forEach(([k,v])=>{ if(!SKIP.includes(k) && v) qp.append(k,v); });
-            if(p.riskType)    qp.append('riskType', p.riskType);
-            if(p.backlogType) qp.append('subtype',  p.backlogType);
-            if(p.limit)       qp.append('limit',    p.limit);
-            endpoint = `${getEndpoint(rt,p)}&${qp}`;
+          if (localParsed.rt) {
+            rt = localParsed.rt;
+            p = localParsed.p;
+            usedAI = false;
+            endpoint = buildEndpointWithParams(rt, p);
+          } else if (followUp && contextRef.current?.rt) {
+            const merged = mergeQueryContext(contextRef.current, localParsed);
+            rt = merged.rt;
+            p = merged.p;
+            usedAI = false;
+            endpoint = buildEndpointWithParams(rt, p);
           }
         }
 
@@ -410,8 +638,8 @@ export default function Chatbot() {
         }
       }
 
-      // ── Step 4: fetch the report data ────────────────────────────────
-      const res  = await axios.get(`${API}${endpoint}`);
+      // ── Step 5: fetch the report data ────────────────────────────────
+      const res  = await axios.get(`${API}${endpoint}`, { signal: controller.signal });
       const raw  = res.data;
       const data = raw.data || (raw.distribution ? raw.distribution : []);
       const cnt  = raw.count ?? data.length;
@@ -423,13 +651,19 @@ export default function Chatbot() {
 
       const aiLabel = usedAI && intent ? `\n🤖 AI: "${intent}"` : '';
       const src     = !usedAI ? '\n⚡ Instant' : '';
-      push('bot', `${tm.icon} ${tm.label} Report Generated!${aiLabel}${src}\n✅ ${cnt} records found${fd?'\n🔍 Filters: '+fd:''}`, data, rt, p?.type||p?.backlogType||'', intent);
+      push('bot', `${tm.icon} ${tm.label} Report Generated!${aiLabel}${src}\n✅ ${cnt} records found${fd?'\n🔍 Filters: '+fd:''}`, data, rt, p?.type||p?.backlogType||'', intent, null, msg);
+      contextRef.current = { rt, p: { ...(p || {}) }, intent };
 
     } catch(e) {
-      push('bot', `❌ Error: ${e.response?.data?.message||e.message}`);
+      if(axios.isCancel(e) || e?.name === 'CanceledError' || e?.code === 'ERR_CANCELED') {
+        push('bot', '⏹ Request cancelled.');
+      } else {
+        push('bot', `❌ Error: ${e.response?.data?.message||e.message}`);
+      }
     }
+    abortRef.current = null;
     setBusy(false);
-  },[API, inp, isListening]);
+  },[API, inp, busy, isListening]);
 
   const doExport=(fmt,data,type)=>{
     const flat=flattenForExport(data,type);
@@ -451,7 +685,7 @@ export default function Chatbot() {
               <p style={S.headSub}>Vignan's Foundation for Science, Technology & Research (Deemed to be University)</p>
             </div>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:12,position:'relative',zIndex:1}}>
+          <div style={{display:'flex',alignItems:'center',gap:10,position:'relative',zIndex:1}}>
             <div style={{display:'flex',alignItems:'center',gap:6,background:'rgba(124,58,237,0.25)',backdropFilter:'blur(8px)',border:'1px solid rgba(167,139,250,0.4)',padding:'5px 12px',borderRadius:20}}>
               <span style={{fontSize:12}}>🤖</span>
               <span style={{color:'#e9d5ff',fontSize:11,fontWeight:600}}>AI-Powered</span>
@@ -466,28 +700,78 @@ export default function Chatbot() {
               <div style={{width:8,height:8,borderRadius:'50%',background:'#10b981',boxShadow:'0 0 8px #10b981',animation:'pulse 2s ease-in-out infinite'}}/>
               <span style={{color:'#fff',fontSize:11,fontWeight:600}}>Online</span>
             </div>
+            {/* Clear chat button */}
+            <button
+              onClick={clearChat}
+              title="Clear chat history"
+              style={{
+                display:'flex',alignItems:'center',gap:5,
+                background:'rgba(255,255,255,0.12)',backdropFilter:'blur(8px)',
+                border:'1px solid rgba(255,255,255,0.2)',
+                color:'rgba(255,255,255,0.85)',padding:'5px 12px',borderRadius:20,
+                fontSize:11,fontWeight:600,cursor:'pointer',transition:'all 0.2s',
+              }}
+              onMouseEnter={e=>{e.currentTarget.style.background='rgba(239,68,68,0.35)';e.currentTarget.style.borderColor='rgba(239,68,68,0.5)';}}
+              onMouseLeave={e=>{e.currentTarget.style.background='rgba(255,255,255,0.12)';e.currentTarget.style.borderColor='rgba(255,255,255,0.2)';}}
+            >🗑 Clear</button>
           </div>
         </div>
       </div>
 
-      {/* ── Suggestion chips ── */}
-      <div style={S.sugSection}>
-        <div style={{color:'#94a3b8',fontSize:10,fontWeight:700,marginBottom:8,textTransform:'uppercase',letterSpacing:'0.8px'}}>Quick suggestions — click or speak</div>
-        <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
-          {SUGG_GROUPS.map(g=>g.items.map(s=>(
-            <button key={s} style={{
-              background: hovS===s?g.bg:'#f8faff',
-              border:`1.5px solid ${hovS===s?g.color:'#e2e8f8'}`,
-              color: hovS===s?g.color:'#64748b',
-              borderRadius:20,padding:'5px 12px',fontSize:11,cursor:'pointer',
-              transition:'all 0.2s',fontWeight:600,whiteSpace:'nowrap',
-              transform: hovS===s?'translateY(-2px)':'none',
-              boxShadow: hovS===s?`0 4px 12px ${g.color}25`:'none',
-            }}
-              onClick={()=>send(s)} onMouseEnter={()=>setHovS(s)} onMouseLeave={()=>setHovS('')}
-            >{s}</button>
-          )))}
-        </div>
+      {/* ── Suggestion strip — collapsible single row ── */}
+      <div style={{borderBottom:'1px solid #e2e8f8',background:'#fff',flexShrink:0}}>
+        {/* Toggle bar */}
+        <button
+          onClick={()=>setSugOpen(o=>!o)}
+          style={{
+            width:'100%',display:'flex',alignItems:'center',justifyContent:'space-between',
+            padding:'7px 24px',background:'none',border:'none',cursor:'pointer',
+            borderBottom: sugOpen ? '1px solid #f1f5f9' : 'none',
+          }}
+        >
+          <span style={{color:'#94a3b8',fontSize:10,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.8px'}}>
+            💡 Quick suggestions
+          </span>
+          <span style={{color:'#94a3b8',fontSize:12}}>{sugOpen ? '▲' : '▼'}</span>
+        </button>
+        {/* Collapsed: single horizontal scrollable row */}
+        {!sugOpen && (
+          <div style={{
+            display:'flex',gap:6,padding:'0 24px 8px',overflowX:'auto',
+            scrollbarWidth:'none',WebkitOverflowScrolling:'touch',
+          }}>
+            <style>{`.sugg-strip::-webkit-scrollbar{display:none}`}</style>
+            {SUGG_GROUPS.flatMap(g=>g.items.slice(0,2)).map(s=>(
+              <button key={s} style={{
+                background:'#f8faff',border:'1.5px solid #e2e8f8',color:'#64748b',
+                borderRadius:20,padding:'4px 11px',fontSize:11,cursor:'pointer',
+                whiteSpace:'nowrap',fontWeight:600,flexShrink:0,transition:'all 0.15s',
+              }}
+                onClick={()=>send(s)}
+                onMouseEnter={e=>{e.currentTarget.style.background='#eff6ff';e.currentTarget.style.borderColor='#2563eb40';e.currentTarget.style.color='#2563eb';}}
+                onMouseLeave={e=>{e.currentTarget.style.background='#f8faff';e.currentTarget.style.borderColor='#e2e8f8';e.currentTarget.style.color='#64748b';}}
+              >{s}</button>
+            ))}
+          </div>
+        )}
+        {/* Expanded: full grouped chips */}
+        {sugOpen && (
+          <div style={{padding:'10px 24px 12px',display:'flex',flexWrap:'wrap',gap:6}}>
+            {SUGG_GROUPS.map(g=>g.items.map(s=>(
+              <button key={s} style={{
+                background: hovS===s?g.bg:'#f8faff',
+                border:`1.5px solid ${hovS===s?g.color:'#e2e8f8'}`,
+                color: hovS===s?g.color:'#64748b',
+                borderRadius:20,padding:'5px 12px',fontSize:11,cursor:'pointer',
+                transition:'all 0.2s',fontWeight:600,whiteSpace:'nowrap',
+                transform: hovS===s?'translateY(-2px)':'none',
+                boxShadow: hovS===s?`0 4px 12px ${g.color}25`:'none',
+              }}
+                onClick={()=>send(s)} onMouseEnter={()=>setHovS(s)} onMouseLeave={()=>setHovS('')}
+              >{s}</button>
+            )))}
+          </div>
+        )}
       </div>
 
       {/* ── Chat messages ── */}
@@ -530,7 +814,7 @@ export default function Chatbot() {
                   )}
                   {m.data&&m.data.length>0&&<MiniTable data={m.data} type={m.type} subType={m.subType||''}/>}
                   {m.data&&m.data.length>0&&(
-                    <div style={{display:'flex',gap:8,marginTop:10,flexWrap:'wrap'}}>
+                    <div style={{display:'flex',gap:8,marginTop:10,flexWrap:'wrap',alignItems:'center'}}>
                       {[
                         {fmt:'excel',label:'📊 Excel',color:'#10b981',bg:'#f0fdf4'},
                         {fmt:'csv',  label:'📄 CSV',  color:'#0ea5e9',bg:'#f0f9ff'},
@@ -548,6 +832,22 @@ export default function Chatbot() {
                           onMouseEnter={()=>setHovB(`${i}${b.fmt}`)} onMouseLeave={()=>setHovB('')}
                         >{b.label}</button>
                       ))}
+                      {/* Refine button — pre-fills input with original query */}
+                      {m.query && (
+                        <button
+                          title="Refine this report"
+                          onClick={()=>setInp(m.query)}
+                          style={{
+                            background: hovB===`${i}refine`?'#faf5ff':'#f8faff',
+                            border:`1.5px solid ${hovB===`${i}refine`?'#a855f7':'#e2e8f8'}`,
+                            color: hovB===`${i}refine`?'#7c3aed':'#64748b',
+                            borderRadius:8,padding:'5px 12px',fontSize:11,cursor:'pointer',
+                            transition:'all 0.2s',fontWeight:700,
+                            transform: hovB===`${i}refine`?'translateY(-1px)':'none',
+                          }}
+                          onMouseEnter={()=>setHovB(`${i}refine`)} onMouseLeave={()=>setHovB('')}
+                        >🔁 Refine</button>
+                      )}
                     </div>
                   )}
                 </div>
@@ -673,26 +973,39 @@ export default function Chatbot() {
           )}
         </div>
 
-        {/* Send button */}
-        <button
-          onClick={()=>send()}
-          disabled={!inp.trim()&&!busy}
-          style={{
-            background: inp.trim()
-              ? hovB==='send'?'linear-gradient(135deg,#1d4ed8,#4f46e5)':'linear-gradient(135deg,#2563eb,#6366f1)'
-              : '#e2e8f8',
-            color: inp.trim() ? '#fff' : '#94a3b8',
-            border:'none', borderRadius:12, padding:'12px 22px',
-            fontSize:14, fontWeight:700, cursor:inp.trim()?'pointer':'default',
-            transition:'all 0.25s',
-            transform: hovB==='send'&&inp.trim()?'scale(1.04)':'none',
-            boxShadow: hovB==='send'&&inp.trim()?'0 8px 25px rgba(37,99,235,0.4)':'none',
-            flexShrink:0,
-          }}
-          onMouseEnter={()=>setHovB('send')} onMouseLeave={()=>setHovB('')}
-        >
-          Send ➤
-        </button>
+        {/* Send / Cancel button */}
+        {busy ? (
+          <button
+            onClick={cancelRequest}
+            style={{
+              background:'linear-gradient(135deg,#ef4444,#dc2626)',
+              color:'#fff', border:'none', borderRadius:12, padding:'12px 22px',
+              fontSize:14, fontWeight:700, cursor:'pointer',
+              boxShadow:'0 4px 14px rgba(239,68,68,0.35)',
+              flexShrink:0, transition:'all 0.2s',
+            }}
+            onMouseEnter={e=>e.currentTarget.style.transform='scale(1.04)'}
+            onMouseLeave={e=>e.currentTarget.style.transform='none'}
+          >⏹ Cancel</button>
+        ) : (
+          <button
+            onClick={()=>send()}
+            disabled={!inp.trim()}
+            style={{
+              background: inp.trim()
+                ? hovB==='send'?'linear-gradient(135deg,#1d4ed8,#4f46e5)':'linear-gradient(135deg,#2563eb,#6366f1)'
+                : '#e2e8f8',
+              color: inp.trim() ? '#fff' : '#94a3b8',
+              border:'none', borderRadius:12, padding:'12px 22px',
+              fontSize:14, fontWeight:700, cursor:inp.trim()?'pointer':'default',
+              transition:'all 0.25s',
+              transform: hovB==='send'&&inp.trim()?'scale(1.04)':'none',
+              boxShadow: hovB==='send'&&inp.trim()?'0 8px 25px rgba(37,99,235,0.4)':'none',
+              flexShrink:0,
+            }}
+            onMouseEnter={()=>setHovB('send')} onMouseLeave={()=>setHovB('')}
+          >Send ➤</button>
+        )}
       </div>
 
       {/* Voice instructions tooltip (shown once) */}
@@ -726,7 +1039,7 @@ const S = {
   headAv:    { width:44,height:44,borderRadius:12,background:'linear-gradient(135deg,#2563eb,#7c3aed)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,boxShadow:'0 4px 15px rgba(37,99,235,0.4)',border:'2px solid rgba(255,255,255,0.25)' },
   headTitle: { fontFamily:"'Sora',sans-serif",fontSize:17,fontWeight:800,color:'#fff',margin:0 },
   headSub:   { color:'rgba(255,255,255,0.55)',fontSize:10,marginTop:3 },
-  sugSection:{ padding:'10px 24px 10px',borderBottom:'1px solid #e2e8f8',background:'#fff',flexShrink:0 },
+  sugSection:{ padding:'10px 24px 10px',background:'#fff',flexShrink:0 },
   chat:      { flex:1,overflowY:'auto',padding:'16px 24px',display:'flex',flexDirection:'column',gap:16 },
   row:       { display:'flex',gap:10,alignItems:'flex-start' },
   botAv:     { width:36,height:36,borderRadius:10,background:'linear-gradient(135deg,#eff6ff,#f5f3ff)',border:'1.5px solid #c7d2fe',display:'flex',alignItems:'center',justifyContent:'center',fontSize:18,flexShrink:0 },

@@ -13,6 +13,7 @@ const router  = require('express').Router();
 const axios   = require('axios');
 const Student = require('../models/Student');
 const { authenticate } = require('../middleware/auth');
+const { isBatchAcademicYearCompatible, buildImpossibleFilter } = require('../lib/filterCompatibility');
 
 router.use(authenticate);
 
@@ -22,6 +23,9 @@ function buildFilter(user, q = {}) {
   else if (q.department)     f.department = q.department;
   if (q.batch)   f.batch   = q.batch;
   if (q.section) f.section = q.section;
+  if (!isBatchAcademicYearCompatible(q.batch, q.academicYear)) {
+    return buildImpossibleFilter(f);
+  }
   return f;
 }
 
@@ -115,11 +119,126 @@ function getRiskFactors({ cgpa, avgAtt, backlogCount, cgpaTrend, dangerSubjects 
   return factors;
 }
 
+const WORD_NUMBERS = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8,
+};
+
+function normalizeDepartment(value) {
+  if (!value) return null;
+  const text = String(value).trim().toLowerCase();
+  if (['cse', 'computer science', 'computer science engineering'].includes(text)) return 'CSE';
+  if (['ece', 'electronics', 'electronics and communication'].includes(text)) return 'ECE';
+  if (['eee', 'electrical', 'electrical and electronics'].includes(text)) return 'EEE';
+  if (['mech', 'mechanical', 'mechanical engineering'].includes(text)) return 'MECH';
+  if (['civil', 'civil engineering'].includes(text)) return 'CIVIL';
+  return String(value).trim().toUpperCase();
+}
+
+function normalizeSection(value) {
+  if (!value) return null;
+  const match = String(value).trim().match(/[ABC]/i);
+  return match ? match[0].toUpperCase() : null;
+}
+
+function normalizeSemester(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const text = String(value).trim().toLowerCase();
+  const direct = text.match(/\b([1-8])\b/);
+  if (direct) return direct[1];
+  if (WORD_NUMBERS[text]) return String(WORD_NUMBERS[text]);
+  return null;
+}
+
+function normalizeYearRange(value) {
+  if (!value) return null;
+  const text = String(value).trim().replace(/[–/]/g, '-');
+  const full = text.match(/\b(20\d{2})-(20\d{2})\b/);
+  if (full) return `${full[1]}-${full[2]}`;
+  const short = text.match(/\b(20\d{2})-(\d{2})\b/);
+  if (short) return `${short[1]}-20${short[2]}`;
+  return null;
+}
+
+function normalizePositiveInteger(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const num = parseInt(String(value).trim(), 10);
+  return Number.isFinite(num) && num > 0 ? num : null;
+}
+
+function inferReportFallback(message) {
+  const lower = String(message || '').toLowerCase();
+  if (/(attendance|shortage|detain|absent)/i.test(lower)) return 'attendance';
+  if (/(internal|external|marks|result|score|grade)/i.test(lower)) return 'marks';
+  if (/(backlog|arrear|pending credits|repeated subject)/i.test(lower)) return 'backlogs';
+  if (/(at risk|risk|struggling|weak students)/i.test(lower)) return 'risk';
+  if (/(topper|top performer|best student)/i.test(lower)) return 'toppers';
+  return 'cgpa';
+}
+
+function normalizeParsedQuery(parsed = {}, message = '') {
+  const report = ['attendance', 'marks', 'backlogs', 'cgpa', 'risk', 'toppers'].includes(parsed.report)
+    ? parsed.report
+    : inferReportFallback(message);
+
+  const normalized = {
+    report,
+    department: normalizeDepartment(parsed.department),
+    batch: normalizeYearRange(parsed.batch),
+    section: normalizeSection(parsed.section),
+    semester: normalizeSemester(parsed.semester),
+    academicYear: normalizeYearRange(parsed.academicYear),
+    type: parsed.type || null,
+    threshold: normalizePositiveInteger(parsed.threshold),
+    limit: normalizePositiveInteger(parsed.limit),
+    intent: parsed.intent || '',
+  };
+
+  const lower = String(message || '').toLowerCase();
+
+  if (report === 'attendance' && !normalized.type) {
+    if (/(low|shortage|below|under|detain)/i.test(lower)) normalized.type = 'low_attendance';
+    else if (/(subject|course)/i.test(lower)) normalized.type = 'subject_wise';
+    else if (/(department|dept|compare)/i.test(lower)) normalized.type = 'department_wise';
+    else normalized.type = 'section_wise';
+  }
+
+  if (report === 'marks' && !normalized.type) {
+    if (/(internal|mid)/i.test(lower)) normalized.type = 'internal';
+    else if (/(semester result|result summary|pass percentage|fail percentage)/i.test(lower)) normalized.type = 'semester_summary';
+    else if (/(subject performance|subject analysis)/i.test(lower)) normalized.type = 'subject_performance';
+    else normalized.type = 'external';
+  }
+
+  if (report === 'cgpa' && !normalized.type) {
+    if (/(distribution|range)/i.test(lower)) normalized.type = 'distribution';
+    else if (/(topper|top performers?|best)/i.test(lower)) normalized.type = 'toppers';
+    else normalized.type = 'ranking';
+  }
+
+  if (report === 'risk' && !normalized.type) {
+    if (/(low cgpa)/i.test(lower)) normalized.type = 'low_cgpa';
+    else if (/(backlog)/i.test(lower)) normalized.type = 'backlogs';
+    else if (/(attendance)/i.test(lower)) normalized.type = 'low_attendance';
+  }
+
+  if (report === 'backlogs' && !normalized.type) {
+    if (/(repeated|repeat)/i.test(lower)) normalized.type = 'repeated';
+    else if (/(pending)/i.test(lower)) normalized.type = 'pending';
+  }
+
+  if (report === 'attendance' && !normalized.threshold && /(low attendance|shortage|detain)/i.test(lower)) {
+    normalized.threshold = 75;
+  }
+
+  return normalized;
+}
+
 const GEMINI_MODELS = [
   process.env.GEMINI_MODEL,
-  'gemini-2.5-flash-lite-preview-06-17',
+  'gemini-2.5-flash-lite',    // GA — fastest/cheapest
   'gemini-2.5-flash',
-  'gemini-1.5-flash',
+
 ].filter(Boolean);
 
 function extractText(data) {
@@ -129,12 +248,21 @@ function extractText(data) {
     .trim();
 }
 
-// ── Gemini API call ───────────────────────────────────────────────────────
-async function callAI(systemPrompt, userMsg) {
+// ── Gemini API call — supports single-turn and multi-turn ────────────────
+async function callAI(systemPrompt, userMsg, conversationHistory = [], maxTokens = 900) {
   const key = process.env.GEMINI_API_KEY;
   if (!key) throw new Error('GEMINI_API_KEY not set in .env');
 
   let lastError = null;
+
+  // Build contents array: history turns + current user message
+  const contents = [
+    ...conversationHistory.map(turn => ({
+      role: turn.role,          // 'user' | 'model'
+      parts: [{ text: turn.text }],
+    })),
+    { role: 'user', parts: [{ text: userMsg }] },
+  ];
 
   for (const model of GEMINI_MODELS) {
     try {
@@ -144,15 +272,10 @@ async function callAI(systemPrompt, userMsg) {
           system_instruction: {
             parts: [{ text: systemPrompt }],
           },
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: userMsg }],
-            },
-          ],
+          contents,
           generationConfig: {
             temperature: 0.2,
-            maxOutputTokens: 900,
+            maxOutputTokens: maxTokens,
           },
         },
         {
@@ -183,7 +306,7 @@ async function callAI(systemPrompt, userMsg) {
 // ── 1. NATURAL LANGUAGE → STRUCTURED QUERY ───────────────────────────────
 router.post('/query', async (req, res) => {
   try {
-    let { message } = req.body;
+    let { message, conversationHistory } = req.body;
     if (!message?.trim()) return res.status(400).json({ message: 'message required' });
 
     // ── Conversational fallback mode ──────────────────────────────────────
@@ -313,6 +436,7 @@ DECISION LOGIC FOR AMBIGUOUS QUERIES
 - "placement eligible" → toppers (high CGPA)
 - "scholarship" → toppers
 - "detain" / "will be detained" → attendance low_attendance
+- filter-only follow-ups like "section B", "only sem 7", "same for ECE" should preserve the previous report context if provided in the message
 
 ═══════════════════════════════════════════════
 ABSOLUTE RULES
@@ -327,9 +451,9 @@ ABSOLUTE RULES
 JSON structure (return exactly this):
 {"report":"<type>","department":null,"batch":null,"section":null,"semester":null,"academicYear":null,"type":null,"threshold":null,"limit":null,"intent":"<clear English sentence of what user wants>"}`;
 
-    const raw    = await callAI(system, message);
+    const raw    = await callAI(system, message, Array.isArray(conversationHistory) ? conversationHistory.slice(-10) : []);
     const clean  = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(clean);
+    const parsed = normalizeParsedQuery(JSON.parse(clean), message);
 
     const qp = new URLSearchParams();
     if (parsed.department)   qp.append('department',   parsed.department);
@@ -536,6 +660,180 @@ Generate 5-7 insights and 3 recommendations. Be specific with numbers. Highlight
     res.json({
       narrative: `The ${selectedDepartment} slice has ${total} students with an average CGPA of ${avgCgpa}. ${atRisk} students require immediate academic intervention. The overall pass rate stands at ${passRate}% with ${toppers} high performers achieving CGPA above 9.0.`,
       insights, recommendations, stats: statsPayload,
+    });
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ── 4. INTERVENTION LETTER ───────────────────────────────────────────────
+// POST /api/ai/intervention-letter
+// Body: { rollNumber, department? }
+// Returns: { letter: "..." }
+router.post('/intervention-letter', async (req, res) => {
+  try {
+    const { rollNumber, department } = req.body;
+    if (!rollNumber) return res.status(400).json({ message: 'rollNumber required' });
+
+    const baseScope = {};
+    if (req.user.role !== 'admin') baseScope.department = req.user.department;
+    else if (department) baseScope.department = department;
+
+    const student = await Student.findOne({ ...baseScope, rollNumber });
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    const semesters = [...(student.semesters || [])].sort((a, b) => a.semNumber - b.semNumber);
+    const attendance = student.attendance || [];
+
+    const avgCgpa = student.cgpa || 0;
+    const backlogs = (student.backlogs || []).map(b => b.subjectName || b.subjectCode).join(', ');
+    const avgAtt = attendance.length
+      ? parseFloat((attendance.reduce((s, a) => s + (a.percentage || 0), 0) / attendance.length).toFixed(1))
+      : null;
+    const latestSem = semesters[semesters.length - 1];
+    const latestSgpa = latestSem?.sgpa || null;
+
+    const studentData = {
+      name: student.name,
+      rollNumber: student.rollNumber,
+      department: student.department,
+      section: student.section,
+      batch: student.batch,
+      currentSemester: student.currentSemester,
+      cgpa: avgCgpa,
+      latestSgpa,
+      avgAttendance: avgAtt,
+      activeBacklogs: backlogs || 'None',
+      lowAttendanceSubjects: attendance.filter(a => (a.percentage || 0) < 75).map(a => a.subjectName || a.subjectCode).join(', ') || 'None',
+    };
+
+    const today = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' });
+
+    const system = `You are an academic officer at VFSTR (Vignan's Foundation for Science, Technology and Research), a deemed university in Guntur, Andhra Pradesh, India.
+
+Draft a formal, professional academic intervention notice addressed to the student and their parents.
+
+Structure the letter exactly as:
+1. Letterhead line: "Vignan's Foundation for Science, Technology and Research (Deemed to be University)"
+2. Date: ${today}
+3. Subject line (bold): "Academic Intervention Notice — <Student Name>"
+4. Salutation: "Dear <Student Name> and Parents/Guardians,"
+5. Opening paragraph: State the purpose — academic performance review
+6. Academic Status section: Mention CGPA, attendance, backlogs using the real numbers
+7. Areas of Concern: Specific, numbered list of issues
+8. Action Plan: 3-4 concrete steps the student must take
+9. Closing: Professional tone, supportive but firm, mention counselor availability
+10. Sign-off: "Academic Affairs Office, VFSTR University"
+
+Keep it under 350 words. Be factual and use the student's actual data. Do not use markdown formatting — plain text paragraphs only.`;
+
+    const raw = await callAI(system, JSON.stringify(studentData), [], 1500);
+
+    return res.json({ letter: raw, student: studentData });
+  } catch (err) {
+    // Graceful fallback when AI unavailable
+    if (err.message?.includes('GEMINI_API_KEY')) {
+      return res.status(503).json({ message: 'AI service not configured. Set GEMINI_API_KEY in .env to enable letter generation.' });
+    }
+    res.status(500).json({ message: err.message });
+  }
+});
+
+// ── 5. NEXT-SEMESTER CGPA PREDICTION ────────────────────────────────────
+// GET /api/ai/predict-cgpa/:rollNumber
+// Returns: { predictions: [{ semester, predictedSgpa, predictedCgpa, confidence, reasoning }] }
+router.get('/predict-cgpa/:rollNumber', async (req, res) => {
+  try {
+    const { rollNumber } = req.params;
+    const baseScope = req.user.role !== 'admin' ? { department: req.user.department } : {};
+
+    const student = await Student.findOne({ ...baseScope, rollNumber });
+    if (!student) return res.status(404).json({ message: 'Student not found' });
+
+    const semesters = [...(student.semesters || [])].sort((a, b) => a.semNumber - b.semNumber);
+    if (semesters.length < 2) {
+      return res.json({
+        rollNumber,
+        name: student.name,
+        currentCgpa: student.cgpa || 0,
+        predictions: [],
+        message: 'Need at least 2 semesters of data to predict',
+      });
+    }
+
+    // ── Statistical prediction (no AI needed — always runs) ──────────────
+    const sgpas = semesters.map(s => s.sgpa || 0);
+    const n = sgpas.length;
+
+    // Weighted moving average (recent semesters weighted more)
+    const weights = sgpas.map((_, i) => i + 1);
+    const totalWeight = weights.reduce((a, b) => a + b, 0);
+    const wma = parseFloat((sgpas.reduce((s, v, i) => s + v * weights[i], 0) / totalWeight).toFixed(2));
+
+    // Linear trend via least-squares
+    const meanX = (n - 1) / 2;
+    const meanY = sgpas.reduce((a, b) => a + b, 0) / n;
+    const slope = sgpas.reduce((s, v, i) => s + (i - meanX) * (v - meanY), 0) /
+                  sgpas.reduce((s, _, i) => s + Math.pow(i - meanX, 2), 0);
+
+    // Variance for confidence
+    const variance = sgpas.reduce((s, v) => s + Math.pow(v - meanY, 2), 0) / n;
+    const stdDev = Math.sqrt(variance);
+
+    const nextSem = semesters[semesters.length - 1].semNumber + 1;
+    const lastSgpa = sgpas[n - 1];
+    const trend = slope;
+
+    // Blend WMA (60%) with trend projection (40%)
+    const predictedSgpa = Math.max(0, Math.min(10,
+      parseFloat((0.6 * wma + 0.4 * (lastSgpa + trend)).toFixed(2))
+    ));
+
+    // Predict CGPA after next semester
+    let cumulativeSum = sgpas.reduce((a, b) => a + b, 0);
+    const predictedCgpa = Math.max(0, Math.min(10,
+      parseFloat(((cumulativeSum + predictedSgpa) / (n + 1)).toFixed(2))
+    ));
+
+    // Confidence: high if low variance and enough data points
+    const confidenceScore = Math.max(30, Math.min(95,
+      Math.round(80 - stdDev * 15 + Math.min(n, 6) * 2)
+    ));
+
+    const trendLabel = trend > 0.3 ? 'improving' : trend < -0.3 ? 'declining' : 'stable';
+    const reasoning = `Based on ${n} semesters of data (SGPA trend: ${trendLabel}, σ=${stdDev.toFixed(2)}). ` +
+      `Weighted moving average: ${wma}. Linear slope: ${trend > 0 ? '+' : ''}${slope.toFixed(3)} per semester.`;
+
+    // ── AI-enhanced narrative (optional, falls back gracefully) ──────────
+    let narrative = null;
+    try {
+      const aiSystem = `You are an academic counselor at VFSTR university. Given a student's SGPA history, write 2 concise sentences:
+1. What the prediction means for this student
+2. One specific academic advice
+
+Keep it under 50 words total. Be encouraging but honest.`;
+      const aiInput = JSON.stringify({
+        name: student.name, sgpaHistory: sgpas,
+        predictedSgpa, predictedCgpa, trend: trendLabel, confidence: confidenceScore,
+      });
+      narrative = await callAI(aiSystem, aiInput);
+    } catch (_) { /* AI unavailable — skip */ }
+
+    return res.json({
+      rollNumber,
+      name: student.name,
+      department: student.department,
+      currentCgpa: student.cgpa || 0,
+      sgpaHistory: semesters.map(s => ({ semester: s.semNumber, sgpa: s.sgpa || 0, academicYear: s.academicYear })),
+      predictions: [{
+        semester: nextSem,
+        predictedSgpa,
+        predictedCgpa,
+        confidence: confidenceScore,
+        trendLabel,
+        reasoning,
+        narrative,
+      }],
     });
   } catch (err) {
     res.status(500).json({ message: err.message });

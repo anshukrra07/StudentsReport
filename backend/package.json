@@ -7,7 +7,9 @@
     "dev": "nodemon server.js",
     "seed": "node seed/seedData.js",
     "import:college": "node import/importCollegeWorkbook.js",
-    "enrich:students": "node import/enrichStudentHistories.js"
+    "enrich:students": "node import/enrichStudentHistories.js",
+    "ensure:coverage": "node import/ensureCoverageData.js",
+    "test": "node --test ./test"
   },
   "dependencies": {
     "axios": "^1.13.6",
@@ -16,11 +18,15 @@
     "dotenv": "^16.0.3",
     "exceljs": "^4.3.0",
     "express": "^4.18.2",
+    "express-rate-limit": "^8.3.2",
+    "helmet": "^8.1.0",
     "jsonwebtoken": "^9.0.0",
     "mongoose": "^7.3.1",
     "node-cron": "^3.0.3",
     "nodemailer": "^8.0.2",
     "pdfkit": "^0.13.0",
+    "twilio": "^6.0.0",
+    "multer": "^1.4.5-lts.1",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {

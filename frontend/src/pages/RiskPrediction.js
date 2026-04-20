@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import { exportToExcel, exportToCSV } from '../utils/exportUtils';
@@ -6,6 +6,252 @@ import { exportToExcel, exportToCSV } from '../utils/exportUtils';
 const RISK_COLOR = { HIGH:'#ef4444', MEDIUM:'#f97316', LOW:'#10b981' };
 const RISK_BG    = { HIGH:'#fff1f2', MEDIUM:'#fff7ed', LOW:'#f0fdf4' };
 const RISK_BORDER= { HIGH:'#fecdd3', MEDIUM:'#fed7aa', LOW:'#a7f3d0' };
+
+// ── Intervention Letter Modal ────────────────────────────────────────────────
+function InterventionModal({ student, API, onClose }) {
+  const [letter, setLetter] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError]   = useState('');
+  const textRef = useRef(null);
+
+  useEffect(() => {
+    setLoading(true); setError('');
+    axios.post(`${API}/ai/intervention-letter`, {
+      rollNumber: student.rollNumber,
+      department: student.department,
+    })
+      .then(r => setLetter(r.data.letter || ''))
+      .catch(e => setError(e.response?.data?.message || 'Failed to generate letter'))
+      .finally(() => setLoading(false));
+  }, [API, student.rollNumber, student.department]);
+
+  const copyToClipboard = () => {
+    if (textRef.current) {
+      navigator.clipboard.writeText(textRef.current.value).catch(() => {});
+    }
+  };
+
+  return (
+    <div style={{
+      position:'fixed', inset:0, background:'rgba(15,23,42,0.7)', zIndex:1000,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:24,
+      backdropFilter:'blur(4px)',
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background:'#fff', borderRadius:20, width:'100%', maxWidth:680,
+        maxHeight:'88vh', display:'flex', flexDirection:'column',
+        boxShadow:'0 25px 80px rgba(15,23,42,0.35)', border:'1.5px solid #e2e8f8',
+        overflow:'hidden',
+      }}>
+        {/* Header */}
+        <div style={{
+          background:'linear-gradient(135deg,#7c3aed,#4f46e5)',
+          padding:'16px 22px', display:'flex', alignItems:'center', justifyContent:'space-between',
+        }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{ fontSize:22 }}>✉️</div>
+            <div>
+              <div style={{ color:'#fff', fontWeight:800, fontSize:15, fontFamily:"'Sora',sans-serif" }}>
+                AI Intervention Letter
+              </div>
+              <div style={{ color:'rgba(255,255,255,0.7)', fontSize:11, marginTop:2 }}>
+                {student.name} · {student.rollNumber} · {student.department}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background:'rgba(255,255,255,0.15)', border:'none', color:'#fff',
+            width:32, height:32, borderRadius:'50%', cursor:'pointer', fontSize:16,
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>✕</button>
+        </div>
+
+        {/* Body */}
+        <div style={{ flex:1, overflowY:'auto', padding:'20px 24px' }}>
+          {loading ? (
+            <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'50px 0', gap:14 }}>
+              <div style={{ width:40, height:40, border:'3px solid #ede9fe', borderTop:'3px solid #7c3aed', borderRadius:'50%', animation:'spin 0.8s linear infinite' }}/>
+              <div style={{ color:'#7c3aed', fontSize:13, fontWeight:600 }}>AI is drafting the letter...</div>
+              <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+            </div>
+          ) : error ? (
+            <div style={{ background:'#fff1f2', border:'1px solid #fecdd3', borderRadius:10, padding:'16px 20px', color:'#be123c', fontSize:13 }}>
+              ⚠️ {error}
+            </div>
+          ) : (
+            <textarea
+              ref={textRef}
+              style={{
+                width:'100%', minHeight:360, background:'#fafbff',
+                border:'1.5px solid #e2e8f8', borderRadius:12,
+                padding:'16px 18px', fontSize:13, lineHeight:1.75,
+                color:'#1e2d4a', fontFamily:"Georgia, 'Times New Roman', serif",
+                outline:'none', resize:'vertical', boxSizing:'border-box',
+              }}
+              value={letter}
+              onChange={e => setLetter(e.target.value)}
+            />
+          )}
+        </div>
+
+        {/* Footer */}
+        {!loading && !error && (
+          <div style={{
+            padding:'12px 24px', borderTop:'1px solid #f1f5f9',
+            display:'flex', gap:10, justifyContent:'flex-end', background:'#fafbff',
+          }}>
+            <button onClick={copyToClipboard} style={{
+              background:'#f8faff', border:'1.5px solid #e2e8f8', color:'#374151',
+              borderRadius:9, padding:'9px 20px', fontSize:13, fontWeight:600,
+              cursor:'pointer', fontFamily:"'Plus Jakarta Sans',sans-serif",
+            }}>📋 Copy</button>
+            <button onClick={() => {
+              const blob = new Blob([letter], { type:'text/plain' });
+              const a = document.createElement('a');
+              a.href = URL.createObjectURL(blob);
+              a.download = `intervention_${student.rollNumber}.txt`;
+              a.click();
+            }} style={{
+              background:'linear-gradient(135deg,#7c3aed,#4f46e5)', border:'none',
+              color:'#fff', borderRadius:9, padding:'9px 20px', fontSize:13,
+              fontWeight:700, cursor:'pointer', fontFamily:"'Plus Jakarta Sans',sans-serif",
+            }}>⬇ Download</button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── CGPA Prediction Panel ────────────────────────────────────────────────────
+function CgpaPredictionPanel({ student, API, onClose }) {
+  const [pred, setPred]     = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError]   = useState('');
+
+  useEffect(() => {
+    setLoading(true); setError('');
+    axios.get(`${API}/ai/predict-cgpa/${student.rollNumber}`)
+      .then(r => setPred(r.data))
+      .catch(e => setError(e.response?.data?.message || 'Prediction failed'))
+      .finally(() => setLoading(false));
+  }, [API, student.rollNumber]);
+
+  const prediction = pred?.predictions?.[0];
+  const trendColor = pred?.predictions?.[0]?.trendLabel === 'improving' ? '#10b981'
+    : pred?.predictions?.[0]?.trendLabel === 'declining' ? '#ef4444' : '#f59e0b';
+
+  return (
+    <div style={{
+      position:'fixed', inset:0, background:'rgba(15,23,42,0.7)', zIndex:1000,
+      display:'flex', alignItems:'center', justifyContent:'center', padding:24,
+      backdropFilter:'blur(4px)',
+    }} onClick={e => e.target === e.currentTarget && onClose()}>
+      <div style={{
+        background:'#fff', borderRadius:20, width:'100%', maxWidth:560,
+        boxShadow:'0 25px 80px rgba(15,23,42,0.35)', border:'1.5px solid #e2e8f8',
+        overflow:'hidden',
+      }}>
+        {/* Header */}
+        <div style={{
+          background:'linear-gradient(135deg,#0ea5e9,#0369a1)',
+          padding:'16px 22px', display:'flex', alignItems:'center', justifyContent:'space-between',
+        }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <div style={{ fontSize:22 }}>📈</div>
+            <div>
+              <div style={{ color:'#fff', fontWeight:800, fontSize:15, fontFamily:"'Sora',sans-serif" }}>
+                Next-Sem CGPA Prediction
+              </div>
+              <div style={{ color:'rgba(255,255,255,0.7)', fontSize:11, marginTop:2 }}>
+                {student.name} · {student.rollNumber}
+              </div>
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background:'rgba(255,255,255,0.15)', border:'none', color:'#fff',
+            width:32, height:32, borderRadius:'50%', cursor:'pointer', fontSize:16,
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>✕</button>
+        </div>
+
+        <div style={{ padding:'22px 24px 26px' }}>
+          {loading ? (
+            <div style={{ display:'flex', flexDirection:'column', alignItems:'center', padding:'40px 0', gap:14 }}>
+              <div style={{ width:40, height:40, border:'3px solid #e0f2fe', borderTop:'3px solid #0ea5e9', borderRadius:'50%', animation:'spin 0.8s linear infinite' }}/>
+              <div style={{ color:'#0ea5e9', fontSize:13, fontWeight:600 }}>Computing trajectory...</div>
+            </div>
+          ) : error ? (
+            <div style={{ background:'#fff1f2', border:'1px solid #fecdd3', borderRadius:10, padding:'16px 20px', color:'#be123c', fontSize:13 }}>⚠️ {error}</div>
+          ) : !prediction ? (
+            <div style={{ textAlign:'center', color:'#94a3b8', padding:'30px 0', fontSize:14 }}>{pred?.message || 'Not enough data'}</div>
+          ) : (
+            <>
+              {/* SGPA history */}
+              <div style={{ marginBottom:20 }}>
+                <div style={{ fontSize:11, fontWeight:800, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:10 }}>SGPA History</div>
+                <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+                  {pred.sgpaHistory?.map(s => (
+                    <div key={s.semester} style={{
+                      background:'#f0f9ff', border:'1px solid #bae6fd', borderRadius:8,
+                      padding:'6px 12px', textAlign:'center', minWidth:52,
+                    }}>
+                      <div style={{ fontSize:10, color:'#0369a1', fontWeight:700 }}>S{s.semester}</div>
+                      <div style={{ fontSize:16, color:'#0ea5e9', fontWeight:800, fontFamily:"'Sora',sans-serif" }}>{s.sgpa}</div>
+                    </div>
+                  ))}
+                  {/* Predicted next */}
+                  <div style={{
+                    background:'linear-gradient(135deg,#0ea5e9,#0369a1)', borderRadius:8,
+                    padding:'6px 12px', textAlign:'center', minWidth:52, position:'relative',
+                    border:'2px dashed rgba(255,255,255,0.4)',
+                  }}>
+                    <div style={{ fontSize:10, color:'rgba(255,255,255,0.8)', fontWeight:700 }}>S{prediction.semester}</div>
+                    <div style={{ fontSize:16, color:'#fff', fontWeight:800, fontFamily:"'Sora',sans-serif" }}>{prediction.predictedSgpa}</div>
+                    <div style={{ fontSize:8, color:'rgba(255,255,255,0.7)', fontWeight:700 }}>PREDICTED</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Key metrics */}
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12, marginBottom:16 }}>
+                {[
+                  { label:'Predicted SGPA', value: prediction.predictedSgpa, color:'#0ea5e9', bg:'#f0f9ff' },
+                  { label:'Projected CGPA', value: prediction.predictedCgpa, color:'#7c3aed', bg:'#f5f3ff' },
+                  { label:'Confidence',    value: `${prediction.confidence}%`, color:'#10b981', bg:'#f0fdf4' },
+                ].map(m => (
+                  <div key={m.label} style={{ background:m.bg, borderRadius:12, padding:'14px 16px', textAlign:'center', border:`1px solid ${m.color}20` }}>
+                    <div style={{ fontSize:22, fontWeight:800, color:m.color, fontFamily:"'Sora',sans-serif" }}>{m.value}</div>
+                    <div style={{ fontSize:11, color:'#64748b', marginTop:4, fontWeight:600 }}>{m.label}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Trend */}
+              <div style={{ background:'#f8faff', border:'1px solid #e2e8f8', borderRadius:10, padding:'12px 16px', marginBottom:prediction.narrative ? 14 : 0 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:6 }}>
+                  <span style={{ fontSize:11, fontWeight:800, color:'#64748b', textTransform:'uppercase', letterSpacing:'0.8px' }}>Trend</span>
+                  <span style={{ background:`${trendColor}20`, color:trendColor, fontSize:11, fontWeight:800, padding:'2px 10px', borderRadius:20, textTransform:'capitalize' }}>
+                    {prediction.trendLabel}
+                  </span>
+                </div>
+                <div style={{ fontSize:12, color:'#64748b', lineHeight:1.5 }}>{prediction.reasoning}</div>
+              </div>
+
+              {/* AI narrative */}
+              {prediction.narrative && (
+                <div style={{ background:'linear-gradient(135deg,#f5f3ff,#ede9fe)', border:'1px solid #c4b5fd', borderRadius:10, padding:'12px 16px', marginTop:14 }}>
+                  <div style={{ fontSize:11, fontWeight:800, color:'#7c3aed', textTransform:'uppercase', letterSpacing:'0.8px', marginBottom:6 }}>🤖 AI Insight</div>
+                  <div style={{ fontSize:13, color:'#374151', lineHeight:1.6 }}>{prediction.narrative}</div>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function getSemesterOptions(batch, academicYear) {
   const all = [1, 2, 3, 4, 5, 6, 7, 8];
@@ -147,6 +393,8 @@ export default function RiskPrediction() {
   const [search,  setSearch]  = useState('');
   const [hov,     setHov]     = useState('');
   const [expanded,setExpanded]= useState(null);
+  const [letterStudent,  setLetterStudent]  = useState(null);  // for intervention letter modal
+  const [predictStudent, setPredictStudent] = useState(null);  // for CGPA prediction modal
   const semesterOptions = getSemesterOptions(filters.batch, filters.academicYear);
 
   useEffect(()=>{ axios.get(`${API}/students/meta`).then(r=>setMeta(r.data)).catch(()=>{}); },[API]);
@@ -188,6 +436,10 @@ export default function RiskPrediction() {
 
   return (
     <div style={{ minHeight:'100vh', background:'#f0f4ff', fontFamily:"'Plus Jakarta Sans',sans-serif" }}>
+
+      {/* Modals */}
+      {letterStudent  && <InterventionModal  student={letterStudent}  API={API} onClose={() => setLetterStudent(null)} />}
+      {predictStudent && <CgpaPredictionPanel student={predictStudent} API={API} onClose={() => setPredictStudent(null)} />}
 
       {/* Hero */}
       <div style={{ position:'relative', height:168, overflow:'hidden' }}>
@@ -351,7 +603,7 @@ export default function RiskPrediction() {
                 <table style={{ width:'100%', borderCollapse:'collapse', fontSize:13 }}>
                   <thead>
                     <tr style={{ background:'#f8faff' }}>
-                      {['#','Roll Number','Name','Dept','CGPA','Avg Att %','Backlogs','Trend','Risk Score','Level','Factors'].map(h=>(
+                      {['#','Roll Number','Name','Dept','CGPA','Avg Att %','Backlogs','Trend','Risk Score','Level','Factors','AI Actions'].map(h=>(
                         <th key={h} style={{ color:ps.color, padding:'10px 14px', textAlign:'left', fontWeight:800, fontSize:10, textTransform:'uppercase', letterSpacing:'0.8px', whiteSpace:'nowrap', borderBottom:`2px solid ${ps.bd}` }}>{h}</th>
                       ))}
                     </tr>
@@ -393,10 +645,37 @@ export default function RiskPrediction() {
                             <td style={{ color:'#94a3b8', padding:'10px 14px', borderBottom:'1px solid #f1f5f9', fontSize:11 }}>
                               {isExp ? '▲ Hide' : `${s.riskFactors?.length||0} factor(s) ▼`}
                             </td>
+                            {/* AI Actions */}
+                            <td style={{ padding:'8px 12px', borderBottom:'1px solid #f1f5f9' }} onClick={e => e.stopPropagation()}>
+                              <div style={{ display:'flex', gap:5 }}>
+                                <button
+                                  title="Generate AI intervention letter"
+                                  onClick={() => setLetterStudent(s)}
+                                  style={{
+                                    background:'#f5f3ff', border:'1px solid #c4b5fd', color:'#7c3aed',
+                                    borderRadius:7, padding:'4px 8px', fontSize:11, fontWeight:700,
+                                    cursor:'pointer', whiteSpace:'nowrap', transition:'all 0.15s',
+                                  }}
+                                  onMouseEnter={e => e.target.style.background='#ede9fe'}
+                                  onMouseLeave={e => e.target.style.background='#f5f3ff'}
+                                >✉️ Letter</button>
+                                <button
+                                  title="Predict next-semester CGPA"
+                                  onClick={() => setPredictStudent(s)}
+                                  style={{
+                                    background:'#f0f9ff', border:'1px solid #bae6fd', color:'#0369a1',
+                                    borderRadius:7, padding:'4px 8px', fontSize:11, fontWeight:700,
+                                    cursor:'pointer', whiteSpace:'nowrap', transition:'all 0.15s',
+                                  }}
+                                  onMouseEnter={e => e.target.style.background='#e0f2fe'}
+                                  onMouseLeave={e => e.target.style.background='#f0f9ff'}
+                                >📈 Predict</button>
+                              </div>
+                            </td>
                           </tr>
                           {isExp && (
                             <tr>
-                              <td colSpan={11} style={{ background:rb, borderBottom:'1px solid #f1f5f9', padding:'12px 20px 14px' }}>
+                              <td colSpan={13} style={{ background:rb, borderBottom:'1px solid #f1f5f9', padding:'12px 20px 14px' }}>
                                 <div style={{ fontSize:12, color:'#374151', fontWeight:600, marginBottom:8 }}>Risk Factors:</div>
                                 <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
                                   {s.riskFactors?.length ? s.riskFactors.map((f,fi)=>(
