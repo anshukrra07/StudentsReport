@@ -253,23 +253,52 @@ function CgpaPredictionPanel({ student, API, onClose }) {
   );
 }
 
+// ─── Year-based filter helpers ───────────────────────────────────────────────
+function currentAcademicYearStart() {
+  const now = new Date();
+  return now.getMonth() + 1 < 6 ? now.getFullYear() - 1 : now.getFullYear();
+}
+function currentBatchYear(batchStart) {
+  const curAY = currentAcademicYearStart();
+  return Math.min(4, Math.max(0, curAY - batchStart + 1));
+}
+function getYearOptions(batch) {
+  if (!batch) return [];
+  const m = String(batch).match(/^(\d{4})-(\d{4})$/);
+  if (!m) return [];
+  const batchStart = Number(m[1]);
+  const maxYear    = currentBatchYear(batchStart);
+  if (maxYear === 0) return [];
+  const opts = [];
+  for (let n = 1; n <= maxYear; n++) {
+    const ayStart = batchStart + n - 1;
+    const value   = `${ayStart}-${ayStart + 1}`;
+    opts.push({ value, label: `Year ${n} (${value})`, year: n });
+  }
+  return opts;
+}
+function getCurrentYearValue(batch) {
+  if (!batch) return '';
+  const m = String(batch).match(/^(\d{4})-(\d{4})$/);
+  if (!m) return '';
+  const batchStart = Number(m[1]);
+  const maxYear    = currentBatchYear(batchStart);
+  if (maxYear === 0) return '';
+  const ayStart = batchStart + maxYear - 1;
+  return `${ayStart}-${ayStart + 1}`;
+}
 function getSemesterOptions(batch, academicYear) {
-  const all = [1, 2, 3, 4, 5, 6, 7, 8];
-  if (!batch || !academicYear) return all;
-
-  const batchMatch = String(batch).match(/^(\d{4})-(\d{4})$/);
-  const yearMatch = String(academicYear).match(/^(\d{4})-(\d{4})$/);
-  if (!batchMatch || !yearMatch) return all;
-
-  const batchStart = Number(batchMatch[1]);
-  const yearStart = Number(yearMatch[1]);
-  const firstSemester = ((yearStart - batchStart) * 2) + 1;
-
-  if (firstSemester < 1 || firstSemester > 8) return all;
-
-  const options = [firstSemester];
-  if (firstSemester + 1 <= 8) options.push(firstSemester + 1);
-  return options;
+  if (!batch || !academicYear) return [1, 2];
+  const bm = String(batch).match(/^(\d{4})-(\d{4})$/);
+  const ym = String(academicYear).match(/^(\d{4})-(\d{4})$/);
+  if (!bm || !ym) return [1, 2];
+  const batchStart = Number(bm[1]);
+  const ayStart    = Number(ym[1]);
+  const yearNum    = ayStart - batchStart + 1;
+  if (yearNum < 1 || yearNum > 4) return [1, 2];
+  const sem1 = (yearNum - 1) * 2 + 1;
+  const sem2 = sem1 + 1;
+  return sem2 <= 8 ? [sem1, sem2] : [sem1];
 }
 
 function RiskBar({ value }) {
@@ -489,10 +518,12 @@ export default function RiskPrediction() {
               </div>
             )}
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-              <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Batch</label>
-              <select style={selStyle(ps.color)} value={filters.batch||''} onChange={e=>setFilters({...filters,batch:e.target.value})}>
+              <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Batch Year</label>
+              <select style={selStyle(ps.color)} value={filters.batch||''} onChange={e=>setFilters({...filters,batch:e.target.value,academicYear:getCurrentYearValue(e.target.value),semester:''})}>
                 <option value="">All Batches</option>
-                {meta.batches.map(b=><option key={b}>{b}</option>)}
+                {[...meta.batches].sort().map((b)=>(
+                  <option key={b} value={b}>{b}</option>
+                ))}
               </select>
             </div>
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
@@ -503,11 +534,11 @@ export default function RiskPrediction() {
               </select>
             </div>
             <div style={{ display:'flex', flexDirection:'column', gap:6 }}>
-              <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Academic Year</label>
-              <select style={selStyle(ps.color)} value={filters.academicYear||''} onChange={e=>setFilters({...filters,academicYear:e.target.value})}>
+              <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Year</label>
+              <select style={selStyle(ps.color)} value={filters.academicYear||''} onChange={e=>setFilters({...filters,academicYear:e.target.value,semester:''})}>
                 <option value="">All Years</option>
-                {['2021-2022','2022-2023','2023-2024','2024-2025','2025-2026'].map(y=>(
-                  <option key={y} value={y}>{y}</option>
+                {getYearOptions(filters.batch).map((o, i)=>(
+                  <option key={o.value} value={o.value}>Year {i + 1}</option>
                 ))}
               </select>
             </div>
@@ -515,7 +546,7 @@ export default function RiskPrediction() {
               <label style={{ color:ps.color, fontSize:10, fontWeight:800, textTransform:'uppercase', letterSpacing:'0.8px' }}>Semester</label>
               <select style={selStyle(ps.color)} value={filters.semester||''} onChange={e=>setFilters({...filters,semester:e.target.value})}>
                 <option value="">All Semesters</option>
-                {semesterOptions.map(s=><option key={s} value={s}>Semester {s}</option>)}
+                {semesterOptions.map((s, i)=><option key={s} value={s}>Semester {i + 1}</option>)}
               </select>
             </div>
           </div>

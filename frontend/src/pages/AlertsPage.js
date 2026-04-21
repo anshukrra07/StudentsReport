@@ -170,12 +170,12 @@ export default function AlertsPage() {
                 <FilterSelect label="Department" value={filters.department} onChange={v => setFilters({ ...filters, department: v })} color={accentColor}
                   options={meta.departments.map(d => ({ value: d, label: d }))} placeholder="All Departments" />
               )}
-              <FilterSelect label="Batch" value={filters.batch} onChange={v => setFilters({ ...filters, batch: v })} color={accentColor}
+              <FilterSelect label="Batch Year" value={filters.batch} onChange={v => setFilters({ ...filters, batch: v })} color={accentColor}
                 options={meta.batches.map(b => ({ value: b, label: b }))} placeholder="All Batches" />
               <FilterSelect label="Section" value={filters.section} onChange={v => setFilters({ ...filters, section: v })} color={accentColor}
                 options={meta.sections.map(s => ({ value: s, label: `Section ${s}` }))} placeholder="All Sections" />
               <FilterSelect label="Semester" value={filters.semester} onChange={v => setFilters({ ...filters, semester: v })} color={accentColor}
-                options={[1,2,3,4,5,6,7,8].map(s => ({ value: String(s), label: `Semester ${s}` }))} placeholder="All Semesters" />
+                options={[1,2,3,4,5,6,7,8].map(s => ({ value: String(s), label: `Year ${Math.ceil(s/2)} · Semester ${s%2===0?2:1}` }))} placeholder="All Semesters" />
             </div>
           </div>
 

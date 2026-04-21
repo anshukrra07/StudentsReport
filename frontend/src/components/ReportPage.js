@@ -40,54 +40,84 @@ function currentAcademicYearStart() {
   return now.getMonth() + 1 < 6 ? now.getFullYear() - 1 : now.getFullYear();
 }
 
-// Semesters possible for a batch (+ optional academic year filter),
-// always capped to what's reachable today — works even when AY is not selected.
-function getSemesterOptions(batch, academicYear) {
-  const all = [1,2,3,4,5,6,7,8];
-  if (!batch) return all;
-  const bm = String(batch).match(/^(\d{4})-(\d{4})$/);
-  if (!bm) return all;
+// ─── Year-based filter helpers ────────────────────────────────────────────────
+// Each batch year (Year 1 … Year 4) maps directly to an academic year and
+// its two fixed semesters (Sem 1 & Sem 2 of that year).
+//
+//   Batch 2022-2026:
+//     Year 1 → AY 2022-2023 → Sem 1, Sem 2
+//     Year 2 → AY 2023-2024 → Sem 3, Sem 4
+//     Year 3 → AY 2024-2025 → Sem 5, Sem 6
+//     Year 4 → AY 2025-2026 → Sem 7, Sem 8
+//
+// "Current year" is auto-detected from today's date and the batch start.
 
-  const batchStart = Number(bm[1]);
-  const curAY      = currentAcademicYearStart();
-
-  // Batch hasn't started yet — no semesters available
-  if (batchStart > curAY) return [];
-
-  // Max semester reachable today regardless of AY filter
-  const maxSem = Math.min(8, (curAY - batchStart) * 2 + 2);
-
-  // If no AY selected: return all semesters up to maxSem
-  if (!academicYear) return all.filter(s => s <= maxSem);
-
-  const ym = String(academicYear).match(/^(\d{4})-(\d{4})$/);
-  if (!ym) return all.filter(s => s <= maxSem);
-
-  const ayStart = Number(ym[1]);
-
-  // Block if AY is in the future
-  if (ayStart > curAY) return [];
-
-  // Return the two semesters that belong to this specific AY, capped by maxSem
-  const offset     = ayStart - batchStart;
-  const first      = offset * 2 + 1;
-  if (first < 1 || first > 8) return all.filter(s => s <= maxSem);
-  const candidates = first + 1 <= 8 ? [first, first + 1] : [first];
-  return candidates.filter(s => s <= maxSem);
+/** Returns how many years (1-4) of a batch have started as of today. */
+function currentBatchYear(batchStart) {
+  const curAY = currentAcademicYearStart();
+  const elapsed = curAY - batchStart + 1; // years completed including current
+  return Math.min(4, Math.max(0, elapsed));
 }
 
-function getAcademicYearOptions(batch) {
-  const fallback = ['2021-2022','2022-2023','2023-2024','2024-2025','2025-2026','2026-2027'];
-  if (!batch) return fallback;
+/**
+ * Returns year options for a batch as:
+ *   [{ value: 'YYYY-YYYY', label: 'Year N (YYYY-YYYY)', year: N, isCurrent: bool }]
+ * Only includes years that have already started.
+ */
+function getYearOptions(batch) {
+  if (!batch) return [];
   const m = String(batch).match(/^(\d{4})-(\d{4})$/);
-  if (!m) return fallback;
+  if (!m) return [];
   const batchStart = Number(m[1]);
-  const batchEnd   = Number(m[2]);
-  // Never show academic years that haven't started yet
-  const maxAyStart = Math.min(batchEnd - 1, currentAcademicYearStart());
-  const years = [];
-  for (let y = batchStart; y <= maxAyStart; y++) years.push(`${y}-${y+1}`);
-  return years;
+  const maxYear    = currentBatchYear(batchStart);
+  if (maxYear === 0) return [];
+  const opts = [];
+  for (let n = 1; n <= maxYear; n++) {
+    const ayStart = batchStart + n - 1;
+    const value   = `${ayStart}-${ayStart + 1}`;
+    opts.push({ value, label: `Year ${n} (${value})`, year: n });
+  }
+  return opts;
+}
+
+/**
+ * Auto-detects the current year option value for a batch.
+ * Returns the academicYear string (e.g. '2025-2026') for the batch's current year,
+ * or '' if the batch hasn't started.
+ */
+function getCurrentYearValue(batch) {
+  if (!batch) return '';
+  const m = String(batch).match(/^(\d{4})-(\d{4})$/);
+  if (!m) return '';
+  const batchStart = Number(m[1]);
+  const maxYear    = currentBatchYear(batchStart);
+  if (maxYear === 0) return '';
+  const ayStart = batchStart + maxYear - 1;
+  return `${ayStart}-${ayStart + 1}`;
+}
+
+/**
+ * Given a batch and an academicYear string, returns [Sem A, Sem B] — always
+ * exactly 1 or 2 semesters (Sem 1 & 2 of that year, mapped to global sem numbers).
+ * Falls back to [1,2] when inputs are missing/invalid.
+ */
+function getSemesterOptions(batch, academicYear) {
+  if (!batch || !academicYear) return [1, 2];
+  const bm = String(batch).match(/^(\d{4})-(\d{4})$/);
+  const ym = String(academicYear).match(/^(\d{4})-(\d{4})$/);
+  if (!bm || !ym) return [1, 2];
+  const batchStart = Number(bm[1]);
+  const ayStart    = Number(ym[1]);
+  const yearNum    = ayStart - batchStart + 1; // 1-indexed year of study
+  if (yearNum < 1 || yearNum > 4) return [1, 2];
+  const sem1 = (yearNum - 1) * 2 + 1; // e.g. Year 2 → Sem 3
+  const sem2 = sem1 + 1;               // e.g. Year 2 → Sem 4
+  return sem2 <= 8 ? [sem1, sem2] : [sem1];
+}
+
+// Legacy alias — kept so nothing else in this file breaks
+function getAcademicYearOptions(batch) {
+  return getYearOptions(batch).map(o => o.value);
 }
 
 // ─── Searchable dropdown ─────────────────────────────────────────────────────
@@ -255,7 +285,8 @@ export default function ReportPage({ reportType, title, icon, description, filte
   const [activeType, setActiveType] = useState('');
 
   const ps = PAGE_STYLE[reportType] || PAGE_STYLE.attendance;
-  const academicYearOptions = getAcademicYearOptions(filters.batch);
+  const yearOptions         = getYearOptions(filters.batch);
+  const academicYearOptions = yearOptions.map(o => o.value);
   const semesterOptions     = getSemesterOptions(filters.batch, filters.academicYear);
 
   useEffect(() => {
@@ -280,15 +311,74 @@ export default function ReportPage({ reportType, title, icon, description, filte
   }, [API]);
 
   const selTypes      = filterConfig?.types || [];
-  const activeColumns = (columnSets && columnSets[activeType]) ? columnSets[activeType] : columns;
+  const activeColumns = (() => {
+    const base = (columnSets && columnSets[activeType]) ? columnSets[activeType] : columns;
+    const t = parseFloat(filters.threshold) || 75;
+    // For attendance report: patch column labels and renders to use the actual threshold
+    if (reportType === 'attendance') {
+      return base.map(c => {
+        if (c.key === 'belowThreshold') {
+          return {
+            ...c,
+            label: `Subjects Below ${t}%`,
+            render: r => r.belowThreshold > 0
+              ? <span style={{ color:'#ef4444', fontWeight:700, background:'#fff1f2', padding:'2px 8px', borderRadius:6 }}>{r.belowThreshold} subject{r.belowThreshold>1?'s':''} ⚠️</span>
+              : <span style={{ color:'#10b981', background:'#f0fdf4', padding:'2px 8px', borderRadius:6 }}>None ✅</span>,
+          };
+        }
+        if (c.key === 'avgAttendance') {
+          return {
+            ...c,
+            label: `Avg Att %`,
+            render: r => {
+              const v = parseFloat(r.avgAttendance || 0);
+              const bg = v < t ? '#fff1f2' : '#f0fdf4';
+              const clr = v < t ? '#ef4444' : '#16a34a';
+              return <span style={{ color:clr, fontWeight:700, background:bg, padding:'2px 8px', borderRadius:6 }}>{v}% {v < t ? '⚠️' : '✅'}</span>;
+            },
+          };
+        }
+        if (c.key === 'lowSubjects') {
+          return {
+            ...c,
+            label: `Subjects Below ${t}%`,
+            render: r => {
+              const count = r.lowSubjects?.length || 0;
+              return <span style={{ color:'#f97316', fontWeight:700, background:'#fff7ed', padding:'2px 8px', borderRadius:6 }}>{count} subject{count!==1?'s':''} below {t}%</span>;
+            },
+          };
+        }
+        if (c.key === 'lowestPct') {
+          return {
+            ...c,
+            label: `Lowest Att %`,
+            render: r => {
+              const v = parseFloat(r.lowestPct || 0);
+              return <span style={{ color:'#ef4444', fontWeight:700, background:'#fff1f2', padding:'2px 8px', borderRadius:6 }}>{v}% {v < t ? `(${t - v > 0 ? (t-v).toFixed(1) : 0}% short)` : ''}</span>;
+            },
+          };
+        }
+        return c;
+      });
+    }
+    return base;
+  })();
 
   const filterLabels = {
     department:'Department', batch:'Batch', section:'Section',
     semester:'Semester', type:'Report Type', threshold:'Threshold %',
-    limit:'Top N', academicYear:'Academic Year',
+    limit:'Top N', academicYear:'Year',
   };
   const getFilterDisplayValue = (key, val) => {
-    if (key === 'semester') return `Sem ${val}`;
+    if (key === 'semester') {
+      const idx = semesterOptions.indexOf(parseInt(val, 10));
+      return idx >= 0 ? `Semester ${idx + 1}` : `Sem ${val}`;
+    }
+    if (key === 'academicYear') {
+      const idx = yearOptions.findIndex(o => o.value === val);
+      return idx >= 0 ? `Year ${idx + 1}` : val;
+    }
+
     if (key === 'type') return selTypes.find(t => t.value === val)?.label || val;
     return val;
   };
@@ -304,7 +394,7 @@ export default function ReportPage({ reportType, title, icon, description, filte
     try {
       let ep = '';
       const qp = new URLSearchParams();
-      Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'type') qp.append(k, v); });
+      Object.entries(filters).forEach(([k, v]) => { if (v && k !== 'type' && k !== 'limit') qp.append(k, v); });
       switch (reportType) {
         case 'attendance': ep = `/reports/attendance?type=${filters.type||'section_wise'}&${qp}`; break;
         case 'marks':      ep = `/reports/marks?type=${filters.type||'external'}&${qp}`;          break;
@@ -417,7 +507,7 @@ export default function ReportPage({ reportType, title, icon, description, filte
             <div style={{ background:`${ps.color}06`, border:`1px dashed ${ps.color}30`, borderRadius:10, padding:'10px 16px', marginBottom:16, display:'flex', alignItems:'center', gap:10 }}>
               <span style={{ fontSize:16 }}>💡</span>
               <span style={{ fontSize:12, color:'#64748b' }}>
-                <strong style={{ color:ps.color }}>Start with Batch</strong> — it automatically narrows the Academic Year and Semester options so you can't make wrong combinations.
+                <strong style={{ color:ps.color }}>Start with Batch</strong> — it auto-selects the current year. Semester always shows 1 &amp; 2 for that year.
               </span>
             </div>
           )}
@@ -432,10 +522,13 @@ export default function ReportPage({ reportType, title, icon, description, filte
                 placeholder="All Departments" hint="optional" loading={metaLoading} />
             )}
 
-            <SearchableSelect label="Batch  ①" value={filters.batch||''} color={ps.color}
-              onChange={v => setFilters({ ...filters, batch:v, academicYear:'', semester:'' })}
-              options={meta.batches.map(b => ({ value:b, label:b }))}
-              placeholder="All Batches" hint="select first →" loading={metaLoading} />
+            <SearchableSelect label="Batch Year  ①" value={filters.batch||''} color={ps.color}
+              onChange={v => setFilters({ ...filters, batch:v, academicYear:getCurrentYearValue(v), semester:'' })}
+              options={[...meta.batches].sort().map((b) => ({
+                value: b,
+                label: b
+              }))}
+              placeholder="All Batches" hint="auto-selects current year →" loading={metaLoading} />
 
             <SearchableSelect label="Section" value={filters.section||''} color={ps.color}
               onChange={v => setFilters({ ...filters, section:v })}
@@ -443,17 +536,17 @@ export default function ReportPage({ reportType, title, icon, description, filte
               placeholder="All Sections" hint="optional" loading={metaLoading} />
 
             {filterConfig?.showAcademicYear && (
-              <SearchableSelect label="Academic Year  ②" value={filters.academicYear||''} color={ps.color}
+              <SearchableSelect label="Year  ②" value={filters.academicYear||''} color={ps.color}
                 onChange={v => setFilters({ ...filters, academicYear:v, semester:'' })}
-                options={academicYearOptions.map(y => ({ value:y, label:y }))}
-                placeholder="All Years" hint={!filters.batch ? '← pick Batch first' : 'narrows semester ↓'} />
+                options={yearOptions.map((o, i) => ({ value: o.value, label: `Year ${i + 1}` }))}
+                placeholder="All Years" hint={!filters.batch ? '← pick Batch first' : 'Sem 1 & 2 shown ↓'} />
             )}
 
             <SearchableSelect
               label={`Semester  ${filterConfig?.showAcademicYear ? '③' : '②'}`}
               value={filters.semester||''} color={ps.color}
               onChange={v => setFilters({ ...filters, semester:v })}
-              options={semesterOptions.map(s => ({ value:String(s), label:`Semester ${s}` }))}
+              options={semesterOptions.map((s, i) => ({ value:String(s), label:`Semester ${i + 1}` }))}
               placeholder="All Semesters" hint={!filters.batch ? '← pick Batch first' : ''} />
 
             {filterConfig?.showType && selTypes.length > 0 && (
@@ -464,9 +557,14 @@ export default function ReportPage({ reportType, title, icon, description, filte
             )}
 
             {filterConfig?.showThreshold && (
-              <InputField label="Threshold %" color={ps.color} type="number" min="0" max="100"
-                placeholder="75" hint="default 75%" value={filters.threshold||''}
-                onChange={v => setFilters({ ...filters, threshold:v })} />
+              <div style={{ display:'flex', flexDirection:'column', gap:5 }}>
+                <InputField label="Threshold %" color={ps.color} type="number" min="0" max="100"
+                  placeholder="75" hint="default 75%" value={filters.threshold||''}
+                  onChange={v => setFilters({ ...filters, threshold:v })} />
+                <div style={{ fontSize:10, color:'#64748b', background:'#f8faff', border:'1px solid #e2e8f0', borderRadius:6, padding:'4px 8px', lineHeight:1.5 }}>
+                  Students with attendance <strong style={{color:'#ef4444'}}>below {parseFloat(filters.threshold)||75}%</strong> in any subject are flagged ⚠️
+                </div>
+              </div>
             )}
 
             {filterConfig?.showLimit && (
@@ -507,6 +605,11 @@ export default function ReportPage({ reportType, title, icon, description, filte
                   {activeType && (
                     <span style={{ marginLeft:8, color:ps.color, fontSize:11, fontWeight:700, background:ps.bg, border:`1px solid ${ps.bd}`, padding:'2px 8px', borderRadius:20 }}>
                       {selTypes.find(t => t.value===activeType)?.label || activeType.replace(/_/g,' ')}
+                    </span>
+                  )}
+                  {reportType === 'attendance' && (
+                    <span style={{ marginLeft:8, background:'#fff1f2', border:'1px solid #fecdd3', color:'#ef4444', fontSize:11, fontWeight:700, padding:'2px 10px', borderRadius:20 }}>
+                      ⚠️ Threshold: {parseFloat(filters.threshold) || 75}%
                     </span>
                   )}
                 </div>

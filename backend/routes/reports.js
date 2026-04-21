@@ -167,9 +167,15 @@ router.get('/attendance', validateReportFilters('attendance'), cacheMiddleware(9
 
     } else {
       // section_wise (default) — return per student with per-subject attendance
+      // If threshold is explicitly provided, only include students with at least one subject below it
+      const thresholdVal = parseFloat(threshold);
+      const thresholdExplicit = !!req.query.threshold; // user set it vs default
       result = students.map(s => {
         const semAtts = getScopedAttendance(s, req.query);
         if (hasScopedFilter(req.query) && !semAtts.length) return null;
+        const lowSubjects = semAtts.filter(a => a.percentage < thresholdVal);
+        // When threshold is explicitly set: skip students with no subjects below it
+        if (thresholdExplicit && lowSubjects.length === 0) return null;
         const avg = semAtts.length
           ? parseFloat((semAtts.reduce((sum,a)=>sum+a.percentage,0)/semAtts.length).toFixed(1))
           : 0;
@@ -181,7 +187,7 @@ router.get('/attendance', validateReportFilters('attendance'), cacheMiddleware(9
           batch:         s.batch,
           avgAttendance: avg,
           subjects:      semAtts.length,
-          belowThreshold:semAtts.filter(a=>a.percentage<parseFloat(threshold)).length,
+          belowThreshold: lowSubjects.length,
           subjectDetails:semAtts.map(a=>({
             code:       a.subjectCode,
             subject:    a.subjectName,
@@ -189,7 +195,7 @@ router.get('/attendance', validateReportFilters('attendance'), cacheMiddleware(9
             attended:   a.attendedClasses,
             total:      a.totalClasses,
             percentage: a.percentage,
-            status:     a.percentage>=parseFloat(threshold)?'OK':'LOW',
+            status:     a.percentage>=thresholdVal?'OK':'LOW',
           })),
         };
       }).filter(Boolean);
